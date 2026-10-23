@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -12,6 +12,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Paragon Plan">
   <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   
@@ -30,14 +31,14 @@
   <div class="login-overlay" id="login-screen-overlay">
     <div class="login-card">
       <div class="login-brand">
-        <div class="login-brand-icon">
-          <i class="fas fa-boxes"></i>
+        <div class="login-brand-icon" style="background:transparent; box-shadow:none; width:auto; height:auto;">
+          <img src="/static/icon.svg" alt="Paragon Production & Store Logo" style="width:64px; height:64px; border-radius:16px; box-shadow:0 8px 20px rgba(0,0,0,0.15);">
         </div>
         <div class="login-title">PARAGON AGRO LIMITED</div>
         <div class="login-subtitle">Production & Store Planning Portal (ERP Connected)</div>
       </div>
 
-      <div class="login-error-alert" id="login-error-alert">
+      <div class="login-error-alert" id="login-error-alert" style="display:none;">
         <i class="fas fa-exclamation-triangle"></i>
         <span id="login-error-text">Invalid User ID or Password!</span>
       </div>
@@ -103,8 +104,8 @@
   <!-- ================= SIDEBAR NAVIGATION ================= -->
   <aside class="sidebar">
     <div class="sidebar-header">
-      <div class="sidebar-logo-icon">
-        <i class="fas fa-industry"></i>
+      <div class="sidebar-logo-icon" style="background:transparent; box-shadow:none; padding:0; display:flex; align-items:center; justify-content:center;">
+        <img src="/static/icon.svg" alt="Paragon Logo" style="width:38px; height:38px; border-radius:10px; box-shadow:0 4px 8px rgba(0,0,0,0.12);">
       </div>
       <div class="sidebar-title">
         Paragon Agro Ltd.

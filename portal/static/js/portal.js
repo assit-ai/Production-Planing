@@ -21,7 +21,7 @@ const AppState = {
   materials: [],
   charts: {},
   storeFilter: 'all',
-  theme: localStorage.getItem('portal_theme') || 'dark'
+  theme: localStorage.getItem('portal_theme') || 'light'
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -36,6 +36,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // ----------------- THEME CONTROLLER -----------------
 function initTheme() {
+  if (!localStorage.getItem('portal_theme_v2_initialized')) {
+    localStorage.setItem('portal_theme', 'light');
+    localStorage.setItem('portal_theme_v2_initialized', 'true');
+  }
+  AppState.theme = localStorage.getItem('portal_theme') || 'light';
   document.documentElement.setAttribute('data-theme', AppState.theme);
   const icon = document.getElementById('theme-icon');
   if (icon) {
@@ -152,8 +157,6 @@ async function submitChangePassword() {
     showError('Network error! Could not connect to server.');
   }
 }
-
-function updateUserUI() {
 
 async function handleLoginSubmit() {
   const username = document.getElementById('login-username').value.trim();
