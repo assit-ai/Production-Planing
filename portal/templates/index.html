@@ -1,0 +1,2054 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Production & Store Planning System | Paragon Agro Limited</title>
+  
+  <!-- PWA & Mobile App Support -->
+  <meta name="theme-color" content="#1e3a8a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Paragon Plan">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+  <link rel="stylesheet" href="/static/css/portal.css">
+</head>
+<body>
+
+  <!-- ================= DEDICATED LOGIN SCREEN OVERLAY ================= -->
+  <div class="login-overlay" id="login-screen-overlay">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="login-brand-icon">
+          <i class="fas fa-boxes"></i>
+        </div>
+        <div class="login-title">PARAGON AGRO LIMITED</div>
+        <div class="login-subtitle">Production & Store Planning Portal (ERP Connected)</div>
+      </div>
+
+      <div class="login-error-alert" id="login-error-alert">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span id="login-error-text">Invalid User ID or Password!</span>
+      </div>
+
+      <form id="login-form" onsubmit="event.preventDefault(); handleLoginSubmit();">
+        <div class="login-input-group">
+          <label for="login-username"><i class="fas fa-user-circle"></i> User ID / Username:</label>
+          <div class="login-input-wrapper">
+            <i class="fas fa-user login-input-icon"></i>
+            <input type="text" class="login-input" id="login-username" placeholder="Enter your User ID" autocomplete="username" required autofocus>
+          </div>
+        </div>
+
+        <div class="login-input-group">
+          <label for="login-password"><i class="fas fa-lock"></i> Password:</label>
+          <div class="login-input-wrapper">
+            <i class="fas fa-key login-input-icon"></i>
+            <input type="password" class="login-input" id="login-password" placeholder="Enter your password" autocomplete="current-password" required>
+          </div>
+        </div>
+
+        <button type="submit" class="login-btn" id="login-btn">
+          <i class="fas fa-sign-in-alt"></i> Login to Portal
+        </button>
+      </form>
+
+      <!-- Quick Test Accounts for Instant Verification -->
+      <div class="quick-accounts-box">
+        <div class="quick-accounts-title">
+          <span>Demo Test Accounts</span>
+          <span>(Click to Auto-fill & Login)</span>
+        </div>
+        <div class="quick-pills">
+          <div class="quick-pill" onclick="quickFillLogin('super_admin', 'admin123')">
+            <strong>👑 Super Admin</strong>
+            <span>super_admin / admin123 (All Units)</span>
+          </div>
+          <div class="quick-pill" onclick="quickFillLogin('admin', 'admin123')">
+            <strong>🛡️ General Admin</strong>
+            <span>admin / admin123 (Viewer & Reports)</span>
+          </div>
+          <div class="quick-pill" onclick="quickFillLogin('dry_store', 'store123')">
+            <strong>🏪 Dry Food Store</strong>
+            <span>dry_store / store123 (Unit 05)</span>
+          </div>
+          <div class="quick-pill" onclick="quickFillLogin('frozen_store', 'store123')">
+            <strong>❄️ Frozen Food Store</strong>
+            <span>frozen_store / store123 (Unit 02)</span>
+          </div>
+          <div class="quick-pill" onclick="quickFillLogin('dry_prod', 'prod123')">
+            <strong>⚙️ Dry Food Prod.</strong>
+            <span>dry_prod / prod123 (Unit 05)</span>
+          </div>
+          <div class="quick-pill" onclick="quickFillLogin('frozen_prod', 'prod123')">
+            <strong>🍗 Frozen Food Prod.</strong>
+            <span>frozen_prod / prod123 (Unit 02)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SIDEBAR NAVIGATION ================= -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo-icon">
+        <i class="fas fa-industry"></i>
+      </div>
+      <div class="sidebar-title">
+        Paragon Agro Ltd.
+        <span>Planning & Store Portal</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-title">Operations & Planning</div>
+      
+      <a class="nav-item active" data-view="dashboard">
+        <i class="fas fa-chart-pie"></i>
+        <span>Dashboard</span>
+      </a>
+
+      <a class="nav-item" data-view="forecast">
+        <i class="fas fa-calendar-alt"></i>
+        <span>Sales Forecast</span>
+      </a>
+
+      <a class="nav-item" data-view="production">
+        <i class="fas fa-cogs"></i>
+        <span>Production Plans</span>
+        <span class="nav-badge badge-primary" id="badge-prod-req">0</span>
+      </a>
+
+      <div class="nav-section-title">Inventory & SCM</div>
+
+      <a class="nav-item" data-view="store">
+        <i class="fas fa-warehouse"></i>
+        <span>Store & Stock</span>
+        <span class="nav-badge badge-danger" id="badge-critical-stock">0</span>
+      </a>
+
+      <a class="nav-item" data-view="procurement">
+        <i class="fas fa-truck-loading"></i>
+        <span>Supply Chain / PO</span>
+        <span class="nav-badge badge-warning" id="badge-po-req">0</span>
+      </a>
+
+      <div class="nav-section-title admin-only">Administration</div>
+
+      <a class="nav-item admin-only" data-view="users">
+        <i class="fas fa-users-cog"></i>
+        <span>User Management</span>
+      </a>
+
+      <a class="nav-item admin-only" data-view="master_bom">
+        <i class="fas fa-sitemap"></i>
+        <span>Master & BOM</span>
+      </a>
+
+      <a class="nav-item" data-view="reports">
+        <i class="fas fa-file-invoice"></i>
+        <span>Reports & Analytics</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-profile-card">
+        <div class="user-avatar" id="user-avatar-badge">A</div>
+        <div class="user-info">
+          <div class="user-name" id="user-display-name">Super Admin</div>
+          <div class="user-role" id="user-display-role">Super Admin • All Units</div>
+        </div>
+      </div>
+      <button class="btn btn-sm btn-outline" style="width:100%; margin-top:0.5rem; justify-content:center; gap:0.4rem; font-size:0.8rem;" onclick="openChangePasswordModal(false)">
+        <i class="fas fa-key"></i> Change Password (পাসওয়ার্ড পরিবর্তন)
+      </button>
+      <button class="btn-logout" style="width:100%; margin-top:0.4rem; justify-content:center;" onclick="logout()">
+        <i class="fas fa-sign-out-alt"></i> Logout (লগআউট)
+      </button>
+    </div>
+  </aside>
+
+  <!-- ================= MAIN CONTENT WRAPPER ================= -->
+  <div class="main-wrapper">
+    
+    <!-- Top Navigation Bar -->
+    <header class="top-navbar">
+      <div class="navbar-left">
+        <button class="mobile-menu-btn" id="mobile-menu-toggle">
+          <i class="fas fa-bars"></i>
+        </button>
+        <div class="page-title-box">
+          <h1 id="page-header-title">Executive Dashboard & Overview</h1>
+          <p>Sales Forecast, BOM Calculation, Store Requisitions, MRR Inward & Poloxy ERP</p>
+        </div>
+      </div>
+
+      <div class="navbar-right">
+        <!-- Product Category / Unit Selector -->
+        <div class="category-selector-box">
+          <select class="category-select" id="category-select-box" onchange="handleCategoryChange(this.value)">
+            <!-- Injected via JavaScript -->
+          </select>
+        </div>
+
+        <!-- Category Lock Badge (if restricted to specific category) -->
+        <div id="category-locked-badge" class="category-locked-badge" style="display:none;">
+          <i class="fas fa-lock"></i>
+          <span id="category-locked-text">Locked</span>
+        </div>
+
+        <!-- UOM Display Toggle (Packet vs Carton) -->
+        <div class="uom-toggle-box" title="Toggle Report Display Unit">
+          <button class="uom-btn active" data-uom="Packet" onclick="setDisplayUOM('Packet')">Packet</button>
+          <button class="uom-btn" data-uom="Carton" onclick="setDisplayUOM('Carton')">Carton</button>
+        </div>
+
+        <!-- Mobile App Quick Install / Instructions Button -->
+        <button class="btn btn-sm btn-outline btn-mobile-app" onclick="showMobileAppInstructions()" title="📱 Mobile App Installation Guide" style="border-color:rgba(56, 189, 248, 0.4); color:#38bdf8;">
+          <i class="fas fa-mobile-alt"></i>
+          <span>App</span>
+        </button>
+
+        <!-- Excel Export Quick Action -->
+        <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel()" title="Download Excel Plan">
+          <i class="fas fa-file-excel" style="color:var(--success);"></i>
+          <span>Excel</span>
+        </button>
+
+        <!-- Theme Toggle (Light / Dark) -->
+        <button class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle Light / Dark Mode">
+          <i class="fas fa-sun" id="theme-icon"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Container Body -->
+    <main class="page-container">
+
+      <!-- ================= 1. DASHBOARD VIEW (HYPERLINKED CARDS) ================= -->
+      <section id="view-dashboard" class="view-section active">
+        <!-- Clickable KPI Cards with Deep Hyperlinks -->
+        <div class="kpi-grid">
+          <div class="kpi-card" onclick="switchView('store', { subTab: 'inventory' })" title="Click to view Store Inventory details">
+            <div class="kpi-content">
+              <div class="kpi-label">Store Inventory</div>
+              <div class="kpi-value" id="kpi-total-items">0</div>
+              <div class="kpi-subtext" id="kpi-rm-pm-count">0 RM / 0 PM Items</div>
+            </div>
+            <div class="kpi-icon icon-blue">
+              <i class="fas fa-boxes"></i>
+            </div>
+          </div>
+
+          <div class="kpi-card" onclick="switchView('store', { subTab: 'inventory', filter: 'critical' })" title="Click to view Critical Low Stock Items">
+            <div class="kpi-content">
+              <div class="kpi-label">Critical Stock Alerts</div>
+              <div class="kpi-value" style="color:var(--danger);" id="kpi-critical-items">0</div>
+              <div class="kpi-subtext" id="kpi-low-stock-count">Below Safety Stock Buffer</div>
+            </div>
+            <div class="kpi-icon icon-red">
+              <i class="fas fa-exclamation-triangle"></i>
+            </div>
+          </div>
+
+          <div class="kpi-card" onclick="switchView('store', { subTab: 'requisitions' })" title="Click to view Material Requisitions">
+            <div class="kpi-content">
+              <div class="kpi-label">Pending Requisitions</div>
+              <div class="kpi-value" style="color:var(--warning);" id="kpi-pending-prod-req">0</div>
+              <div class="kpi-subtext" id="kpi-pending-po">Production & Supply Chain</div>
+            </div>
+            <div class="kpi-icon icon-amber">
+              <i class="fas fa-clipboard-list"></i>
+            </div>
+          </div>
+
+          <div class="kpi-card" onclick="switchView('reports')" title="Click to view Inventory Valuation Report">
+            <div class="kpi-content">
+              <div class="kpi-label">Inventory Valuation</div>
+              <div class="kpi-value" id="kpi-inventory-val">৳ 0</div>
+              <div class="kpi-subtext" id="kpi-rm-pm-val">RM & PM Total Value</div>
+            </div>
+            <div class="kpi-icon icon-green">
+              <i class="fas fa-coins"></i>
+            </div>
+          </div>
+
+          <div class="kpi-card" onclick="switchView('reports')" title="Click to view Forecast vs Production Performance">
+            <div class="kpi-content">
+              <div class="kpi-label">Forecast vs Production</div>
+              <div class="kpi-value" style="color:var(--cyan);" id="kpi-achievement">0%</div>
+              <div class="kpi-subtext" id="kpi-actual-produced">0 / 0 Units</div>
+            </div>
+            <div class="kpi-icon icon-cyan">
+              <i class="fas fa-chart-line"></i>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <i class="fas fa-chart-bar" style="color:var(--primary);"></i>
+                Sales Forecast vs Production Plan & Actual Output
+              </div>
+              <span class="pill pill-safe">July 2026</span>
+            </div>
+            <div style="height: 250px; position:relative;">
+              <canvas id="chart-forecast-vs-prod"></canvas>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <i class="fas fa-shield-alt" style="color:var(--success);"></i>
+                Store Stock Health
+              </div>
+            </div>
+            <div style="height: 250px; position:relative;">
+              <canvas id="chart-stock-health"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Critical Action Items & Recent Transactions -->
+        <div style="display:grid; grid-template-columns: 2fr 1fr; gap:1.25rem;">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <i class="fas fa-bell" style="color:var(--danger);"></i>
+                Critical Raw & Packaging Materials (Replenishment Action Needed)
+              </div>
+              <button class="btn btn-sm btn-danger" onclick="triggerAutoReplenishment()">
+                <i class="fas fa-magic"></i> Auto-Replenish All
+              </button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Current Stock</th>
+                    <th>Safety Stock</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="dashboard-critical-table-body">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <i class="fas fa-history" style="color:var(--accent);"></i>
+                Recent Store Audit Log
+              </div>
+            </div>
+            <div id="dashboard-recent-txns">
+              <!-- Injected via JavaScript -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 2. SALES FORECAST VIEW ================= -->
+      <section id="view-forecast" class="view-section">
+        <div class="action-bar">
+          <div style="display:flex; align-items:center; gap:1rem;">
+            <div class="form-group" style="margin-bottom:0;">
+              <select class="form-control" id="forecast-month-select" style="min-width:170px;" onchange="loadForecastView()">
+                <option value="2026-07">📅 2026-07</option>
+              </select>
+            </div>
+            <div style="font-size:0.85rem; color:var(--text-muted);">
+              Total Cartons: <strong id="forecast-total-cartons" style="color:var(--primary); font-size:1.1rem;">0</strong>
+              &nbsp;|&nbsp; Total Units: <strong id="forecast-total-pieces" style="color:var(--success);">0</strong>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <button class="btn btn-outline" onclick="downloadForecastBlankTemplate()">
+              <i class="fas fa-file-download"></i> Blank Template
+            </button>
+            <button class="btn btn-outline" onclick="openBulkForecastModal()">
+              <i class="fas fa-file-upload"></i> Bulk Upload Excel
+            </button>
+            <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('forecast')">
+              <i class="fas fa-file-excel" style="color:var(--success);"></i> Export Forecast
+            </button>
+            <button class="btn btn-outline" onclick="openSmartPlanModal()" style="border-color:var(--cyan); color:var(--cyan);">
+              <i class="fas fa-brain"></i> Smart Suggest Plan
+            </button>
+            <button class="btn btn-primary" onclick="saveForecastChanges()">
+              <i class="fas fa-save"></i> Save Forecast Changes
+            </button>
+            <div id="forecast-readonly-tag" class="pill pill-safe" style="display:none; align-items:center; gap:0.4rem; padding:0.4rem 0.85rem; font-size:0.8rem; background:rgba(59, 130, 246, 0.12); border:1px solid rgba(59, 130, 246, 0.3); color:#38bdf8;">
+              <i class="fas fa-eye"></i> Read-Only View (শুধুমাত্র Sales টিম ফোরকাস্ট এন্ট্রি করতে পারে)
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <i class="fas fa-calendar-check" style="color:var(--primary);"></i>
+              SKU-wise Monthly Sales Forecast Entry
+            </div>
+            <span style="font-size:0.75rem; color:var(--text-dim);">Edit carton values and click "Save Forecast Changes"</span>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>SKU Code</th>
+                  <th>Finished Good / Description</th>
+                  <th>Category</th>
+                  <th style="text-align:right;">Forecast (Cartons)</th>
+                  <th style="text-align:right;">Total Output Units</th>
+                  <th>BOM Setup</th>
+                </tr>
+              </thead>
+              <tbody id="forecast-table-body">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Super Admin Data Clear Danger Zone -->
+        <div class="danger-zone-card admin-only">
+          <div class="danger-zone-header">
+            <i class="fas fa-exclamation-triangle"></i> Super Admin System Reset & Data Cleanup Tool
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">
+            Super Admin can selectively delete records (Sales Forecast, Production Plans, Store Requisitions, MRRs, or Wastage) by specific date range or wipe all data.
+          </p>
+          <button class="btn btn-danger" onclick="openClearDataModal()">
+            <i class="fas fa-trash-alt"></i> Open Data Cleanup Tool (ডেটা মুছুন)
+          </button>
+        </div>
+      </section>
+
+      <!-- ================= 3. PRODUCTION PLANNING VIEW ================= -->
+      <section id="view-production" class="view-section">
+        <div class="action-bar">
+          <div>
+            <h2 style="font-size:1.1rem; font-weight:700;">Production Plans & Actual Output Tracking</h2>
+            <p style="font-size:0.75rem; color:var(--text-muted);">Compare sales forecast with opening finished goods stock and track plant output.</p>
+          </div>
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <button class="btn btn-outline" onclick="downloadProductionTemplate()">
+              <i class="fas fa-file-download"></i> Blank Template
+            </button>
+            <button class="btn btn-outline" onclick="openBulkProductionModal()">
+              <i class="fas fa-file-upload"></i> Bulk Upload Plans
+            </button>
+            <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('production')">
+              <i class="fas fa-file-excel" style="color:var(--success);"></i> Export Plans
+            </button>
+            <button class="btn btn-outline" onclick="syncFromPoloxyERP()" title="Pull output from Poloxy ERP">
+              <i class="fas fa-sync-alt"></i> Pull Poloxy ERP
+            </button>
+            <button class="btn btn-primary" onclick="openCreatePlanModal()">
+              <i class="fas fa-plus"></i> Create Plan
+            </button>
+            <div id="production-readonly-tag" class="pill pill-safe" style="display:none; align-items:center; gap:0.4rem; padding:0.4rem 0.85rem; font-size:0.8rem; background:rgba(59, 130, 246, 0.12); border:1px solid rgba(59, 130, 246, 0.3); color:#38bdf8;">
+              <i class="fas fa-eye"></i> Read-Only View (শুধুমাত্র Production টিম প্ল্যান তৈরি ও আউটপুট দিতে পারে)
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <i class="fas fa-tasks" style="color:var(--primary);"></i>
+              Active Production Plans
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Plan No</th>
+                  <th>Finished Good (SKU)</th>
+                  <th>Target Plan</th>
+                  <th>Actual Produced</th>
+                  <th>Achievement %</th>
+                  <th>Status</th>
+                  <th>Store Requisition</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="production-plans-table-body">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Super Admin Data Clear Danger Zone -->
+        <div class="danger-zone-card admin-only">
+          <div class="danger-zone-header">
+            <i class="fas fa-exclamation-triangle"></i> Super Admin System Reset & Data Cleanup Tool
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">
+            Super Admin can selectively delete records (Sales Forecast, Production Plans, Store Requisitions, MRRs, or Wastage) by specific date range or wipe all data.
+          </p>
+          <button class="btn btn-danger" onclick="openClearDataModal()">
+            <i class="fas fa-trash-alt"></i> Open Data Cleanup Tool (ডেটা মুছুন)
+          </button>
+        </div>
+      </section>
+
+      <!-- ================= 4. STORE & INVENTORY VIEW (SEPARATE TABS) ================= -->
+      <section id="view-store" class="view-section">
+        <!-- Sub-Navigation Tabs (Store Inventory vs Incoming Requisitions vs MRR vs Wastage) -->
+        <div class="store-sub-nav">
+          <div class="store-tab-link active" data-subtab="inventory" onclick="switchStoreSubTab('inventory')">
+            <i class="fas fa-boxes"></i> Store Inventory & RM-PM Stock
+          </div>
+          <div class="store-tab-link" data-subtab="requisitions" onclick="switchStoreSubTab('requisitions')">
+            <i class="fas fa-dolly-flatbed"></i> Production Material Requisitions
+          </div>
+          <div class="store-tab-link" data-subtab="mrr" onclick="switchStoreSubTab('mrr')">
+            <i class="fas fa-truck-loading"></i> MRR Inward Register (Stock Entry)
+          </div>
+          <div class="store-tab-link" data-subtab="wastage" onclick="switchStoreSubTab('wastage')">
+            <i class="fas fa-trash-alt"></i> Wastage & Scrap Register
+          </div>
+        </div>
+
+        <!-- SUB-TAB 1: STORE INVENTORY & STOCK -->
+        <div id="store-tab-inventory">
+          <div class="action-bar">
+            <div class="filter-tabs" id="store-tabs">
+              <button class="tab-btn active" onclick="setStoreFilter('all', this)">All Items</button>
+              <button class="tab-btn" onclick="setStoreFilter('RM', this)">Raw Materials (RM)</button>
+              <button class="tab-btn" onclick="setStoreFilter('PM', this)">Packaging Materials (PM)</button>
+              <button class="tab-btn" onclick="setStoreFilter('critical', this)">🔴 Critical</button>
+              <button class="tab-btn" onclick="setStoreFilter('low', this)">🟡 Low Stock</button>
+              <button class="tab-btn" onclick="setStoreFilter('safe', this)">🟢 Safe Buffer</button>
+              <button class="tab-btn" onclick="setStoreFilter('fast', this)">⚡ Fast</button>
+              <button class="tab-btn" onclick="setStoreFilter('slow', this)">🐢 Slow</button>
+              <button class="tab-btn" onclick="setStoreFilter('non_moving', this)">💤 Non-Moving</button>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+              <div class="search-box">
+                <i class="fas fa-search search-icon"></i>
+                <input type="text" id="store-search-input" placeholder="Search RM / PM / Supplier..." oninput="loadStoreStock()">
+              </div>
+              <button class="btn btn-sm btn-success" onclick="openCreateMRRModal()">
+                <i class="fas fa-plus"></i> + MRR Stock Inward
+              </button>
+              <button class="btn btn-sm btn-outline" onclick="openCreateWastageModal()">
+                <i class="fas fa-dumpster"></i> + Log Wastage
+              </button>
+              <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('store')">
+                <i class="fas fa-file-excel" style="color:var(--success);"></i> Export Store Excel
+              </button>
+              <button class="btn btn-sm btn-danger" onclick="triggerAutoReplenishment()">
+                <i class="fas fa-magic"></i> Auto Replenish
+              </button>
+              <div id="store-readonly-tag" class="pill pill-safe" style="display:none; align-items:center; gap:0.4rem; padding:0.4rem 0.85rem; font-size:0.8rem; background:rgba(59, 130, 246, 0.12); border:1px solid rgba(59, 130, 246, 0.3); color:#38bdf8;">
+                <i class="fas fa-eye"></i> Read-Only View (শুধুমাত্র Store টিম ইনভেন্টরি এন্ট্রি ও স্টক ইস্যু করতে পারে)
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>FSN Status</th>
+                    <th>Current Stock</th>
+                    <th>Safety Stock</th>
+                    <th>In-Transit</th>
+                    <th>Status</th>
+                    <th>Stock Value</th>
+                    <th>Quick Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="store-stock-table-body">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUB-TAB 2: INCOMING PRODUCTION REQUISITIONS (Matches User Screenshot 2!) -->
+        <div id="store-tab-requisitions" style="display:none;">
+          <div class="card" style="border-left:4px solid var(--warning);">
+            <div class="card-header">
+              <div class="card-title">
+                <i class="fas fa-dolly-flatbed" style="color:var(--warning);"></i>
+                Incoming Material Requisitions from Production Department
+              </div>
+              <span style="font-size:0.75rem; color:var(--text-dim);">Issuing materials automatically deducts Store stock</span>
+            </div>
+            <div id="store-incoming-reqs-list">
+              <!-- Injected via JavaScript -->
+            </div>
+          </div>
+        </div>
+
+        <!-- SUB-TAB 3: MRR INWARD REGISTER -->
+        <div id="store-tab-mrr" style="display:none;">
+          <div class="action-bar">
+            <div>
+              <h3 style="font-size:1rem; font-weight:700;">Material Receive Reports (MRR) Stock Entry</h3>
+              <p style="font-size:0.75rem; color:var(--text-muted);">Inward goods entries with reference to MRR, supplier, chalan, and vehicle.</p>
+            </div>
+            <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('mrr')"><i class="fas fa-file-excel" style="color:var(--success);"></i> Export MRR Excel</button>
+            <button class="btn btn-success" onclick="openCreateMRRModal()">
+              <i class="fas fa-plus"></i> + New MRR Stock Entry
+            </button>
+          </div>
+          <div class="card">
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>MRR No</th>
+                    <th>Date</th>
+                    <th>Supplier Name</th>
+                    <th>Item Received</th>
+                    <th>Quantity</th>
+                    <th>Unit Price</th>
+                    <th>Total Amount</th>
+                    <th>Received By</th>
+                  </tr>
+                </thead>
+                <tbody id="store-mrr-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUB-TAB 4: WASTAGE REGISTER -->
+        <div id="store-tab-wastage" style="display:none;">
+          <div class="action-bar">
+            <div>
+              <h3 style="font-size:1rem; font-weight:700;">Wastage & Process Loss Register</h3>
+              <p style="font-size:0.75rem; color:var(--text-muted);">Track process scrap, machine jam loss, and damaged packaging materials.</p>
+            </div>
+            <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('wastage')"><i class="fas fa-file-excel" style="color:var(--success);"></i> Export Wastage Excel</button>
+            <button class="btn btn-outline" onclick="openCreateWastageModal()">
+              <i class="fas fa-plus"></i> + Record Wastage Entry
+            </button>
+          </div>
+          <div class="card">
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Item Name</th>
+                    <th>Type</th>
+                    <th>Wastage Qty</th>
+                    <th>Reason</th>
+                    <th>Estimated Cost</th>
+                    <th>Remarks</th>
+                  </tr>
+                </thead>
+                <tbody id="store-wastage-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 5. SUPPLY CHAIN & PROCUREMENT VIEW ================= -->
+      <section id="view-procurement" class="view-section">
+        <div class="action-bar">
+          <div>
+            <h2 style="font-size:1.1rem; font-weight:700;">Purchase Requisitions & Supply Chain Orders</h2>
+            <p style="font-size:0.75rem; color:var(--text-muted);">Manage purchase orders for Raw & Packaging Materials and process Goods Receipt Notes (GRN).</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <i class="fas fa-truck-loading" style="color:var(--primary);"></i>
+              Purchase Order Tracking & GRN Receiving
+            </div>
+            <span style="font-size:0.75rem; color:var(--text-dim);">Receiving GRN automatically updates Store inventory</span>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>PO / PR No</th>
+                  <th>Material / Item</th>
+                  <th>Type</th>
+                  <th>Requisition Qty</th>
+                  <th>Unit Price</th>
+                  <th>Total Value</th>
+                  <th>Status</th>
+                  <th>Delivery Date</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="procurement-table-body">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Super Admin Data Clear Danger Zone -->
+        <div class="danger-zone-card admin-only">
+          <div class="danger-zone-header">
+            <i class="fas fa-exclamation-triangle"></i> Super Admin System Reset & Data Cleanup Tool
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">
+            Super Admin can selectively delete records (Sales Forecast, Production Plans, Store Requisitions, MRRs, or Wastage) by specific date range or wipe all data.
+          </p>
+          <button class="btn btn-danger" onclick="openClearDataModal()">
+            <i class="fas fa-trash-alt"></i> Open Data Cleanup Tool (ডেটা মুছুন)
+          </button>
+        </div>
+      </section>
+
+      <!-- ================= 6. SUPER ADMIN: MASTER DATA, USERS & ERP ================= -->
+      <section id="view-master_bom" class="view-section">
+        <div class="action-bar">
+          <div class="filter-tabs" id="admin-tabs">
+            <button class="tab-btn active" data-tab="skus" onclick="setAdminTab('skus')">Finished Goods (SKUs)</button>
+            <button class="tab-btn" data-tab="materials" onclick="setAdminTab('materials')">Materials Master (RM & PM)</button>
+            <button class="tab-btn" data-tab="bom" onclick="setAdminTab('bom')">BOM Formulation Builder</button>
+            <button class="tab-btn" data-tab="users" onclick="setAdminTab('users')">User Management (RBAC)</button>
+            <button class="tab-btn" data-tab="erp" onclick="setAdminTab('erp')">Poloxy ERP Settings</button>
+          </div>
+
+          <div style="display:flex; gap:0.5rem;">
+            <button class="btn btn-outline" onclick="openCreateSKUModal()">
+              <i class="fas fa-plus"></i> New Finished Good
+            </button>
+            <button class="btn btn-primary" onclick="openCreateMaterialModal()">
+              <i class="fas fa-plus"></i> New RM / PM Item
+            </button>
+          </div>
+        </div>
+
+        <!-- Tab 1: SKUs -->
+        <div id="admin-tab-skus" class="admin-tab-content">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Finished Goods Master & Carton Conversion Setup</div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>SKU Code</th>
+                    <th>Product Name</th>
+                    <th>Unit / Category</th>
+                    <th>Pack Size</th>
+                    <th>Carton Conversion</th>
+                    <th>Status</th>
+                    <th>BOM Setup</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-sku-table-body">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Materials -->
+        <div id="admin-tab-materials" class="admin-tab-content" style="display:none;">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Raw & Packaging Materials Master</div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Unit / Cat</th>
+                    <th>UOM</th>
+                    <th>Unit Price (৳)</th>
+                    <th>Safety Stock</th>
+                    <th>Default Supplier</th>
+                    <th>Edit</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-mat-table-body">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: BOM Builder -->
+        <div id="admin-tab-bom" class="admin-tab-content" style="display:none;">
+          <div class="card">
+            <div class="card-header">
+              <div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+                <div class="card-title">Bill of Materials (BOM) Formulation</div>
+                <select class="form-control" id="bom-active-sku-select" style="min-width:320px;" onchange="loadSKUBOMDetails(this.value)">
+                  <option value="">-- Choose Finished Good to Edit BOM --</option>
+                </select>
+              </div>
+            </div>
+            
+            <div style="padding:0.5rem 0.25rem 1rem;">
+              <h3 id="bom-selected-sku-title" style="font-size:1.15rem; font-weight:700;">Select a Finished Good above</h3>
+              <p id="bom-sku-meta" style="font-size:0.78rem; color:var(--text-dim);"></p>
+            </div>
+
+            <div id="bom-items-container">
+              <!-- Injected via JavaScript -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 4: User Management (RBAC) -->
+        <div id="admin-tab-users" class="admin-tab-content" style="display:none;">
+          <div class="action-bar">
+            <div>
+              <h3 style="font-size:1rem; font-weight:700;">User Accounts & Category Access Permissions</h3>
+              <p style="font-size:0.75rem; color:var(--text-muted);">Users restricted to specific categories cannot view or edit other categories.</p>
+            </div>
+            <button class="btn btn-primary" onclick="openCreateUserModal()">
+              <i class="fas fa-user-plus"></i> Add New User
+            </button>
+          </div>
+          <div class="card">
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th>Full Name</th>
+                    <th>Role</th>
+                    <th>Department</th>
+                    <th>Allowed Category</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-users-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 5: Poloxy ERP Settings -->
+        <div id="admin-tab-erp" class="admin-tab-content" style="display:none;">
+          <div class="card" style="max-width:700px;">
+            <div class="card-header">
+              <div class="card-title">
+                <i class="fas fa-server" style="color:var(--primary);"></i>
+                Poloxy ERP Integration Configuration
+              </div>
+            </div>
+            <div style="padding:0.5rem 0;">
+              <div class="form-group">
+                <label class="form-label">Poloxy ERP Base URL:</label>
+                <input type="text" class="form-control" id="erp-cfg-url" value="http://erp.paragon.com.bd">
+              </div>
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+                <div class="form-group">
+                  <label class="form-label">ERP Username:</label>
+                  <input type="text" class="form-control" id="erp-cfg-user" value="a0162e0019">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">ERP Password:</label>
+                  <input type="password" class="form-control" id="erp-cfg-pass" value="pal.123456">
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">05. Dry Foods Work Center Name:</label>
+                <input type="text" class="form-control" id="erp-cfg-dry-wc" value="Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa)">
+              </div>
+              <div class="form-group">
+                <label class="form-label">02. Frozen Foods Work Center Name:</label>
+                <input type="text" class="form-control" id="erp-cfg-frozen-wc" value="Frozen Finished Goods">
+              </div>
+              <button class="btn btn-primary" onclick="saveERPSettings()" style="margin-top:0.5rem;">
+                <i class="fas fa-save"></i> Save ERP Configuration
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 7. REPORTS & ANALYTICS VIEW ================= -->
+      <section id="view-reports" class="view-section">
+        <div class="action-bar">
+          <div>
+            <h2 style="font-size:1.1rem; font-weight:700;">Executive Performance & Inventory Reports</h2>
+            <p style="font-size:0.75rem; color:var(--text-muted);">Forecast variance, RM-PM stock health, and Fast/Slow/Non-moving (FSN) analysis.</p>
+          </div>
+          <div style="display:flex; gap:0.5rem;">
+            <button class="btn btn-primary" onclick="downloadSectionExcel()">
+              <i class="fas fa-file-excel"></i> Export to Excel (.xlsx)
+            </button>
+            <button class="btn btn-outline" onclick="printPDFReport()">
+              <i class="fas fa-print"></i> Print / Download PDF
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <i class="fas fa-balance-scale" style="color:var(--primary);"></i>
+              Forecast vs Production Performance Report (July 2026)
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>SKU Code</th>
+                  <th>Product Name</th>
+                  <th>Unit / Cat</th>
+                  <th>Forecast</th>
+                  <th>Planned</th>
+                  <th>Actual Output</th>
+                  <th>Variance</th>
+                  <th>Achievement %</th>
+                </tr>
+              </thead>
+              <tbody id="report-forecast-prod-tbody">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <i class="fas fa-boxes" style="color:var(--success);"></i>
+              RM & PM Stock Summary & FSN Movement Status
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Item Code</th>
+                  <th>Material Name</th>
+                  <th>Type</th>
+                  <th>Unit / Cat</th>
+                  <th>UOM</th>
+                  <th>Current Stock</th>
+                  <th>Safety Stock</th>
+                  <th>Deficit Buffer</th>
+                  <th>Unit Price</th>
+                  <th>Total Valuation (৳)</th>
+                  <th>FSN Status</th>
+                </tr>
+              </thead>
+              <tbody id="report-stock-summary-tbody">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Super Admin Data Clear Danger Zone -->
+        <div class="danger-zone-card admin-only">
+          <div class="danger-zone-header">
+            <i class="fas fa-exclamation-triangle"></i> Super Admin System Reset & Data Cleanup Tool
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">
+            Super Admin can selectively delete records (Sales Forecast, Production Plans, Store Requisitions, MRRs, or Wastage) by specific date range or wipe all data.
+          </p>
+          <button class="btn btn-danger" onclick="openClearDataModal()">
+            <i class="fas fa-trash-alt"></i> Open Data Cleanup Tool (ডেটা মুছুন)
+          </button>
+        </div>
+      </section>
+
+      <!-- ================= 8. USER MANAGEMENT VIEW (SUPER ADMIN RBAC) ================= -->
+      <section id="view-users" class="view-section">
+        <div class="action-bar">
+          <div>
+            <h2 style="font-size:1.1rem; font-weight:700;">System User Management & Access Control (RBAC)</h2>
+            <p style="font-size:0.75rem; color:var(--text-muted);">
+              Manage login credentials, assign passwords, set roles, and enforce category restrictions (Dry Foods, Frozen Foods, Chicken).
+            </p>
+          </div>
+          <button class="btn btn-primary" onclick="openCreateUserModal()">
+            <i class="fas fa-user-plus"></i> + Add New User
+          </button>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <i class="fas fa-users-cog" style="color:var(--primary);"></i>
+              Registered Portal Users & Access Control
+            </div>
+            <span class="pill pill-safe" id="users-count-pill">0 Users</span>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>User ID</th>
+                  <th>Full Name</th>
+                  <th>Role</th>
+                  <th>Department</th>
+                  <th>Category Access</th>
+                  <th>Password</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="users-table-body">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Super Admin Data Clear Danger Zone -->
+        <div class="danger-zone-card admin-only">
+          <div class="danger-zone-header">
+            <i class="fas fa-exclamation-triangle"></i> Super Admin System Reset & Data Cleanup Tool
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">
+            Super Admin can selectively delete records (Sales Forecast, Production Plans, Store Requisitions, MRRs, or Wastage) by specific date range or wipe all data.
+          </p>
+          <button class="btn btn-danger" onclick="openClearDataModal()">
+            <i class="fas fa-trash-alt"></i> Open Data Cleanup Tool (ডেটা মুছুন)
+          </button>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ================= MOBILE BOTTOM NAVIGATION ================= -->
+  <div class="mobile-nav">
+    <a class="mobile-nav-item active" data-view="dashboard">
+      <i class="fas fa-chart-pie"></i>
+      <span>Dashboard</span>
+    </a>
+    <a class="mobile-nav-item" data-view="forecast">
+      <i class="fas fa-calendar-alt"></i>
+      <span>Forecast</span>
+    </a>
+    <a class="mobile-nav-item" data-view="production">
+      <i class="fas fa-cogs"></i>
+      <span>Production</span>
+    </a>
+    <a class="mobile-nav-item" data-view="store">
+      <i class="fas fa-warehouse"></i>
+      <span>Store</span>
+    </a>
+    <a class="mobile-nav-item" data-view="reports">
+      <i class="fas fa-file-alt"></i>
+      <span>Reports</span>
+    </a>
+  </div>
+
+  <!-- ================= MODALS ================= -->
+
+  <!-- Modal: Add New Product Category -->
+  <div class="modal-backdrop" id="modal-add-category">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">Add New Product Category / Branch Unit</div>
+        <button class="modal-close" onclick="hideModal('modal-add-category')">&times;</button>
+      </div>
+      <form id="form-add-category" onsubmit="event.preventDefault(); submitAddCategory();">
+        <div class="modal-body">
+          <div style="display:grid; grid-template-columns: 1fr 2fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Category Code:</label>
+              <input type="text" class="form-control" id="new-cat-code" placeholder="e.g. 03" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Category Name:</label>
+              <input type="text" class="form-control" id="new-cat-name" placeholder="e.g. 03. Dairy Products" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Poloxy ERP Work Center Name:</label>
+            <input type="text" class="form-control" id="new-cat-work-center" placeholder="e.g. Dairy Milk & Ghee Plant">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Branch ID:</label>
+            <input type="text" class="form-control" id="new-cat-branch" placeholder="e.g. B0003">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Description:</label>
+            <input type="text" class="form-control" id="new-cat-desc" placeholder="Category notes">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-add-category')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Category</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Smart Plan Suggester -->
+  <div class="modal-backdrop" id="modal-smart-plan">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-brain" style="color:var(--cyan);"></i> Smart Production Plan Suggester</div>
+        <button class="modal-close" onclick="hideModal('modal-smart-plan')">&times;</button>
+      </div>
+      <div class="modal-body" id="smart-plan-container">
+        <!-- Injected via JavaScript -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideModal('modal-smart-plan')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Create MRR Stock Entry -->
+  <div class="modal-backdrop" id="modal-create-mrr">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-truck-loading" style="color:var(--success);"></i> Material Receive Report (MRR) Stock Entry</div>
+        <button class="modal-close" onclick="hideModal('modal-create-mrr')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:grid; grid-template-columns: 2fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label class="form-label">Select Material (RM / PM):</label>
+            <select class="form-control" id="mrr-material-select">
+              <!-- Injected via JavaScript -->
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Received Date:</label>
+            <input type="date" class="form-control" id="mrr-date">
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label class="form-label">Received Quantity:</label>
+            <input type="number" class="form-control" id="mrr-qty" step="0.1" min="0.1">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Unit Price (৳):</label>
+            <input type="number" class="form-control" id="mrr-price" step="0.5">
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns: 2fr 1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label class="form-label">Supplier Name:</label>
+            <input type="text" class="form-control" id="mrr-supplier" placeholder="Vendor name">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Chalan No:</label>
+            <input type="text" class="form-control" id="mrr-chalan" placeholder="e.g. CH-1234">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Vehicle No:</label>
+            <input type="text" class="form-control" id="mrr-vehicle" placeholder="e.g. DM-Ta-11">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideModal('modal-create-mrr')">Cancel</button>
+        <button class="btn btn-success" onclick="submitCreateMRR()">
+          <i class="fas fa-check-circle"></i> Save MRR & Update Stock
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Create Wastage Entry -->
+  <div class="modal-backdrop" id="modal-create-wastage">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-trash-alt" style="color:var(--danger);"></i> Log Material Wastage / Scrap</div>
+        <button class="modal-close" onclick="hideModal('modal-create-wastage')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Select Material (RM / PM):</label>
+          <select class="form-control" id="wastage-item-select">
+            <!-- Injected via JavaScript -->
+          </select>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label class="form-label">Wastage Quantity:</label>
+            <input type="number" class="form-control" id="wastage-qty" step="0.1" min="0.1">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Date:</label>
+            <input type="date" class="form-control" id="wastage-date">
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label class="form-label">Reason for Wastage:</label>
+            <select class="form-control" id="wastage-reason">
+              <option value="Process Loss">Process Loss</option>
+              <option value="Machine Jam">Machine Jam</option>
+              <option value="Quality Rejection">Quality Rejection</option>
+              <option value="Handling Damage">Handling Damage</option>
+              <option value="Expired">Expired</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Batch No:</label>
+            <input type="text" class="form-control" id="wastage-batch" placeholder="e.g. B-202607-1">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Remarks:</label>
+          <input type="text" class="form-control" id="wastage-remarks" placeholder="Notes on scrap cause">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideModal('modal-create-wastage')">Cancel</button>
+        <button class="btn btn-danger" onclick="submitCreateWastage()">
+          <i class="fas fa-check"></i> Record Wastage
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Create Production Plan -->
+  <div class="modal-backdrop" id="modal-create-plan">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div class="modal-title">Create Production Plan</div>
+        <button class="modal-close" onclick="hideModal('modal-create-plan')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:grid; grid-template-columns: 2fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label class="form-label">Select Finished Good (SKU):</label>
+            <select class="form-control" id="plan-sku-select" onchange="calculatePlanBOMRequirement()">
+              <option value="">-- Select SKU --</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Planned Cartons:</label>
+            <input type="number" class="form-control" id="plan-cartons-input" min="1" value="500" oninput="calculatePlanBOMRequirement()">
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label class="form-label">Plan Date:</label>
+            <input type="date" class="form-control" id="plan-date-input">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Notes / Production Batch:</label>
+            <input type="text" class="form-control" id="plan-notes-input" placeholder="e.g. Sales forecast fulfillment">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size:0.85rem; font-weight:600; color:var(--text-main);">
+            <input type="checkbox" id="plan-auto-req-check" checked style="width:16px; height:16px; accent-color:var(--primary);">
+            Automatically generate RM-PM Requisition to Store Department
+          </label>
+        </div>
+
+        <div class="card" style="margin-bottom:0; background:var(--bg-tertiary);" id="plan-bom-preview-container">
+          <!-- Injected via JavaScript -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideModal('modal-create-plan')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCreatePlan()">
+          <i class="fas fa-check"></i> Confirm & Create Plan
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Update Output -->
+  <div class="modal-backdrop" id="modal-update-output">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">Record Actual Produced Output</div>
+        <button class="modal-close" onclick="hideModal('modal-update-output')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="update-output-plan-id">
+        <div style="margin-bottom:1rem;">
+          Plan: <strong id="update-output-plan-no"></strong> &nbsp;|&nbsp; Target: <strong id="update-output-planned"></strong>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Actual Produced Output (Cartons):</label>
+          <input type="number" class="form-control" id="update-output-qty" min="0">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Plan Status:</label>
+          <select class="form-control" id="update-output-status">
+            <option value="Completed">Completed</option>
+            <option value="In Production">In Production</option>
+            <option value="Planned">Planned</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideModal('modal-update-output')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitUpdateOutput()">Save Output</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Requisition Detail & Material Issuance -->
+  <div class="modal-backdrop" id="modal-requisition-detail">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" id="modal-req-title">Requisition Details</div>
+          <div style="font-size:0.75rem; color:var(--text-dim);" id="modal-req-subtitle"></div>
+        </div>
+        <button class="modal-close" onclick="hideModal('modal-requisition-detail')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Material</th>
+                <th>Type</th>
+                <th>Required</th>
+                <th>Issued</th>
+                <th>Store Stock</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="modal-req-items-body">
+              <!-- Injected via JavaScript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideModal('modal-requisition-detail')">Close</button>
+        <button class="btn btn-success" id="modal-req-issue-all-btn">
+          <i class="fas fa-box-open"></i> Issue All Required Materials
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: User Create (RBAC) -->
+  <div class="modal-backdrop" id="modal-create-user">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">Create New System User</div>
+        <button class="modal-close" onclick="hideModal('modal-create-user')">&times;</button>
+      </div>
+      <form id="form-create-user" onsubmit="event.preventDefault(); submitCreateUser();">
+        <div class="modal-body">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Username:</label>
+              <input type="text" class="form-control" id="new-user-username" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Password:</label>
+              <input type="password" class="form-control" id="new-user-pass" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Full Name:</label>
+            <input type="text" class="form-control" id="new-user-name" required>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Role:</label>
+              <select class="form-control" id="new-user-role">
+                <option value="Super Admin">Super Admin</option>
+                <option value="Sales">Sales</option>
+                <option value="Production">Production</option>
+                <option value="Store" selected>Store</option>
+                <option value="Supply Chain">Supply Chain</option>
+                <option value="Management">Management</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Department:</label>
+              <input type="text" class="form-control" id="new-user-dept" value="Store & Inventory">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Allowed Category / Unit Access:</label>
+            <select class="form-control" id="new-user-allowed-cat">
+              <option value="ALL">🌐 All Units (Full Access)</option>
+              <option value="05" selected>05. Dry Foods Only</option>
+              <option value="02">02. Frozen Foods Only</option>
+              <option value="01">01. Process Chicken Only</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-create-user')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create User</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: User Edit (RBAC) -->
+  <div class="modal-backdrop" id="modal-edit-user">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">Edit User Account & Access</div>
+        <button class="modal-close" onclick="hideModal('modal-edit-user')">&times;</button>
+      </div>
+      <form id="form-edit-user" onsubmit="event.preventDefault(); submitEditUser();">
+        <input type="hidden" id="edit-user-id">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Full Name:</label>
+            <input type="text" class="form-control" id="edit-user-name" required>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Role:</label>
+              <select class="form-control" id="edit-user-role">
+                <option value="Super Admin">Super Admin</option>
+                <option value="Sales">Sales</option>
+                <option value="Production">Production</option>
+                <option value="Store">Store</option>
+                <option value="Supply Chain">Supply Chain</option>
+                <option value="Management">Management</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Department:</label>
+              <input type="text" class="form-control" id="edit-user-dept">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Allowed Category / Unit Access:</label>
+            <select class="form-control" id="edit-user-allowed-cat">
+              <option value="ALL">🌐 All Units (Full Access)</option>
+              <option value="05">05. Dry Foods Only</option>
+              <option value="02">02. Frozen Foods Only</option>
+              <option value="01">01. Process Chicken Only</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">New Password (leave blank to keep current):</label>
+            <input type="password" class="form-control" id="edit-user-pass" placeholder="••••••••">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-edit-user')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: User Self Password Change -->
+  <div class="modal-backdrop" id="modal-change-password">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-key" style="color:var(--primary); margin-right:6px;"></i> Change Account Password</div>
+        <button class="modal-close" id="change-pass-close-btn" onclick="hideModal('modal-change-password')">&times;</button>
+      </div>
+      <form id="form-change-password" onsubmit="event.preventDefault(); submitChangePassword();">
+        <div class="modal-body">
+          <div id="first-time-password-alert" class="alert alert-warning" style="display:none; margin-bottom:1rem; font-size:0.85rem; padding:0.75rem 1rem; border-radius:8px; background:rgba(245,158,11,0.15); border:1px solid #f59e0b; color:#f59e0b;">
+            <i class="fas fa-shield-alt" style="margin-right:6px;"></i>
+            <strong>Security Alert (নিরাপত্তা নোটিফিকেশন):</strong> This is your initial login. For system security, please update your temporary password immediately before proceeding.
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Current / Default Password (বর্তমান পাসওয়ার্ড):</label>
+            <input type="password" class="form-control" id="change-pass-old" placeholder="Enter your current password" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">New Password (নতুন পাসওয়ার্ড - min 6 chars):</label>
+            <input type="password" class="form-control" id="change-pass-new" placeholder="Enter new strong password" required minlength="6">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Confirm New Password (নতুন পাসওয়ার্ড নিশ্চিত করুন):</label>
+            <input type="password" class="form-control" id="change-pass-confirm" placeholder="Re-type new password" required minlength="6">
+          </div>
+          <div id="change-pass-error" style="color:var(--danger); font-size:0.82rem; margin-top:0.5rem; display:none;"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" id="change-pass-cancel-btn" onclick="hideModal('modal-change-password')">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Update Password</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Edit Safety Stock -->
+  <div class="modal-backdrop" id="modal-edit-safety-stock">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">Configure Safety Stock</div>
+        <button class="modal-close" onclick="hideModal('modal-edit-safety-stock')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="safety-mat-id">
+        <div style="margin-bottom:1rem;">
+          Item: <strong id="safety-mat-name" style="color:var(--primary);"></strong>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Minimum Safety Stock Level:</label>
+          <input type="number" class="form-control" id="safety-stock-input" step="0.1" min="0">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideModal('modal-edit-safety-stock')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitEditSafetyStock()">Update Safety Stock</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Adjust Stock -->
+  <div class="modal-backdrop" id="modal-adjust-stock">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">Stock Physical Audit Adjustment</div>
+        <button class="modal-close" onclick="hideModal('modal-adjust-stock')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="adjust-mat-id">
+        <div style="margin-bottom:1rem;">
+          Item: <strong id="adjust-mat-name" style="color:var(--primary);"></strong> &nbsp;|&nbsp;
+          Current: <strong id="adjust-current-display"></strong>
+        </div>
+        <div class="form-group">
+          <label class="form-label">New Verified Stock Balance:</label>
+          <input type="number" class="form-control" id="adjust-new-stock" step="0.1" min="0">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Audit Notes:</label>
+          <input type="text" class="form-control" id="adjust-notes" value="Physical count reconciliation">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideModal('modal-adjust-stock')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAdjustStock()">Confirm Adjustment</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Raise Purchase Requisition -->
+  <div class="modal-backdrop" id="modal-raise-purchase">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">Raise Purchase Requisition for Supply Chain</div>
+        <button class="modal-close" onclick="hideModal('modal-raise-purchase')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="raise-po-mat-id">
+        <div style="margin-bottom:1rem;">
+          Item: <strong id="raise-po-mat-name" style="color:var(--primary);"></strong>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label class="form-label">Requisition Quantity:</label>
+            <input type="number" class="form-control" id="raise-po-qty" min="1">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Estimated Unit Price (৳):</label>
+            <input type="number" class="form-control" id="raise-po-price" step="0.5">
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns: 2fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label class="form-label">Supplier Name:</label>
+            <input type="text" class="form-control" id="raise-po-supplier">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Priority:</label>
+            <select class="form-control" id="raise-po-priority">
+              <option value="High">High</option>
+              <option value="Medium" selected>Medium</option>
+              <option value="Low">Low</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideModal('modal-raise-purchase')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitRaisePurchase()">
+          <i class="fas fa-paper-plane"></i> Raise Requisition
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Receive Goods (GRN) -->
+  <div class="modal-backdrop" id="modal-receive-grn">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">Goods Receipt Note (GRN) Verification</div>
+        <button class="modal-close" onclick="hideModal('modal-receive-grn')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="grn-po-id">
+        <div style="margin-bottom:1rem;">
+          PO: <strong id="grn-po-no"></strong> &nbsp;|&nbsp; Item: <strong id="grn-mat-name" style="color:var(--primary);"></strong>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Verified Received Quantity (<span id="grn-unit-label"></span>):</label>
+          <input type="number" class="form-control" id="grn-qty-input" step="0.1" min="1">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Inspection Remarks:</label>
+          <input type="text" class="form-control" id="grn-remarks" value="Quality verified, accepted in Store stock">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideModal('modal-receive-grn')">Cancel</button>
+        <button class="btn btn-success" onclick="submitReceiveGRN()">
+          <i class="fas fa-check-circle"></i> Confirm GRN & Add to Stock
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Create SKU -->
+  <div class="modal-backdrop" id="modal-create-sku">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">Create New Finished Good (SKU)</div>
+        <button class="modal-close" onclick="hideModal('modal-create-sku')">&times;</button>
+      </div>
+      <form id="form-create-sku" onsubmit="event.preventDefault(); submitCreateSKU();">
+        <div class="modal-body">
+          <div style="display:grid; grid-template-columns: 1fr 2fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Category / Unit:</label>
+              <select class="form-control" id="new-sku-category-code">
+                <option value="05">05. Dry Foods</option>
+                <option value="02">02. Frozen Foods</option>
+                <option value="01">01. Process Chicken</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">SKU Name:</label>
+              <input type="text" class="form-control" id="new-sku-name" placeholder="e.g. Butter Milk Cookies 250gm" required>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">SKU Code (Auto or Custom):</label>
+              <input type="text" class="form-control" id="new-sku-code" placeholder="Auto-generated if blank">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Category Group:</label>
+              <input type="text" class="form-control" id="new-sku-category" value="Cookies & Cake">
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Pack Size:</label>
+              <input type="text" class="form-control" id="new-sku-pack" placeholder="e.g. 250gm">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Packets per Carton:</label>
+              <input type="number" class="form-control" id="new-sku-ctn-size" value="12" min="1">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Primary UOM:</label>
+              <select class="form-control" id="new-sku-uom">
+                <option value="Packet">Packet</option>
+                <option value="Pcs">Pcs</option>
+                <option value="Kg">Kg</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-create-sku')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Finished Good</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Create Material -->
+  <div class="modal-backdrop" id="modal-create-material">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">Create Raw or Packaging Material</div>
+        <button class="modal-close" onclick="hideModal('modal-create-material')">&times;</button>
+      </div>
+      <form id="form-create-material" onsubmit="event.preventDefault(); submitCreateMaterial();">
+        <div class="modal-body">
+          <div style="display:grid; grid-template-columns: 1fr 2fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Category / Unit:</label>
+              <select class="form-control" id="new-mat-cat-code">
+                <option value="05">05. Dry Foods</option>
+                <option value="02">02. Frozen Foods</option>
+                <option value="01">01. Process Chicken</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Material Name:</label>
+              <input type="text" class="form-control" id="new-mat-name" placeholder="e.g. Cocoa Powder" required>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Material Type:</label>
+              <select class="form-control" id="new-mat-type">
+                <option value="RM">Raw Material (RM)</option>
+                <option value="PM">Packaging Material (PM)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">UOM:</label>
+              <select class="form-control" id="new-mat-unit">
+                <option value="Kg">Kg</option>
+                <option value="Gm">Gm</option>
+                <option value="Pcs">Pcs</option>
+                <option value="Roll">Roll</option>
+                <option value="Box">Box</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Unit Price (৳):</label>
+              <input type="number" class="form-control" id="new-mat-price" value="50" step="0.5">
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Opening Stock:</label>
+              <input type="number" class="form-control" id="new-mat-stock" value="100" min="0">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Safety Stock Buffer:</label>
+              <input type="number" class="form-control" id="new-mat-safety" value="25" min="0">
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 2fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Default Supplier:</label>
+              <input type="text" class="form-control" id="new-mat-supplier" placeholder="Vendor name">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Lead Time (Days):</label>
+              <input type="number" class="form-control" id="new-mat-lead" value="7" min="1">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-create-material')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Material</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Add Item to BOM -->
+  <div class="modal-backdrop" id="modal-add-bom-item">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title">Add RM or PM to BOM Formulation</div>
+        <button class="modal-close" onclick="hideModal('modal-add-bom-item')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="bom-add-sku-id">
+        <div class="form-group">
+          <label class="form-label">Select Raw Material or Packaging Material:</label>
+          <select class="form-control" id="bom-add-material-select">
+            <!-- Injected via JavaScript -->
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Consumption Rate per Carton:</label>
+          <input type="number" class="form-control" id="bom-add-rate-input" step="0.0001" min="0.0001" placeholder="e.g. 1.0526 for RM or 1.0 for PM outer box">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Formulation Notes (Optional):</label>
+          <input type="text" class="form-control" id="bom-add-notes-input" placeholder="e.g. Dough formulation or inner foil">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="hideModal('modal-add-bom-item')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddBOMItem()">Add to BOM</button>
+      </div>
+    </div>
+  </div>
+
+  
+  <!-- Modal: Bulk Upload Sales Forecast -->
+  <div class="modal-backdrop" id="modal-bulk-forecast">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-file-upload" style="color:var(--primary);"></i> Bulk Upload Sales Forecast (.xlsx)</div>
+        <button class="modal-close" onclick="hideModal('modal-bulk-forecast')">&times;</button>
+      </div>
+      <form id="form-bulk-forecast" onsubmit="event.preventDefault(); submitBulkForecast();">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Target Month:</label>
+            <select class="form-control" id="bulk-forecast-month">
+              <option value="2026-07">2026-07 (July 2026)</option>
+              <option value="2026-08">2026-08 (August 2026)</option>
+              <option value="2026-09">2026-09 (September 2026)</option>
+              <option value="2026-10">2026-10 (October 2026)</option>
+              <option value="2026-11">2026-11 (November 2026)</option>
+              <option value="2026-12">2026-12 (December 2026)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Select Excel File (.xlsx):</label>
+            <div class="file-upload-box" onclick="document.getElementById('bulk-forecast-file').click()">
+              <div class="file-upload-icon"><i class="fas fa-file-excel"></i></div>
+              <div style="font-weight:600; color:var(--text-main);">Click to browse Excel file</div>
+              <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Upload the filled Paragon Sales Forecast Template</div>
+              <input type="file" id="bulk-forecast-file" accept=".xlsx, .xls" style="display:none;" onchange="this.previousElementSibling.textContent = this.files[0] ? this.files[0].name : 'Click to browse Excel file'">
+            </div>
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-dim);">
+            <i class="fas fa-info-circle"></i> Tip: Use the <strong>"Blank Template"</strong> button on the forecast screen to download the exact columns before uploading.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-bulk-forecast')">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-upload"></i> Upload & Apply</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Bulk Upload Production Plans -->
+  <div class="modal-backdrop" id="modal-bulk-production">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-file-upload" style="color:var(--primary);"></i> Bulk Upload Production Plans (.xlsx)</div>
+        <button class="modal-close" onclick="hideModal('modal-bulk-production')">&times;</button>
+      </div>
+      <form id="form-bulk-production" onsubmit="event.preventDefault(); submitBulkProduction();">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Target Month:</label>
+            <select class="form-control" id="bulk-prod-month">
+              <option value="2026-07">2026-07 (July 2026)</option>
+              <option value="2026-08">2026-08 (August 2026)</option>
+              <option value="2026-09">2026-09 (September 2026)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Select Excel File (.xlsx):</label>
+            <div class="file-upload-box" onclick="document.getElementById('bulk-prod-file').click()">
+              <div class="file-upload-icon"><i class="fas fa-file-excel"></i></div>
+              <div style="font-weight:600; color:var(--text-main);">Click to browse Excel file</div>
+              <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Upload the filled Paragon Production Plan Template</div>
+              <input type="file" id="bulk-prod-file" accept=".xlsx, .xls" style="display:none;" onchange="this.previousElementSibling.textContent = this.files[0] ? this.files[0].name : 'Click to browse Excel file'">
+            </div>
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-dim);">
+            <i class="fas fa-info-circle"></i> Uploading will automatically generate Material Requisitions for Store department based on SKU BOM formulations.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-bulk-production')">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-upload"></i> Import Plans</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Super Admin Data Clear & Reset Tool -->
+  <div class="modal-backdrop" id="modal-clear-data">
+    <div class="modal-dialog">
+      <div class="modal-header" style="border-bottom:1px solid rgba(239, 68, 68, 0.3);">
+        <div class="modal-title" style="color:var(--danger);"><i class="fas fa-trash-alt"></i> Super Admin Data Cleanup Tool</div>
+        <button class="modal-close" onclick="hideModal('modal-clear-data')">&times;</button>
+      </div>
+      <form id="form-clear-data" onsubmit="event.preventDefault(); submitClearData();">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Select Section / Tab to Clear:</label>
+            <select class="form-control" id="clear-data-section">
+              <option value="forecast">📈 Sales Forecast Data Only</option>
+              <option value="production">⚙️ Production Plans & Requisitions</option>
+              <option value="requisitions">📋 Material Requisitions Only</option>
+              <option value="mrr">🚚 MRR Stock Inward Entries Only</option>
+              <option value="wastage">🗑️ Wastage & Scrap Logs Only</option>
+              <option value="procurement">🛒 Purchase Requisitions (PO)</option>
+              <option value="store_txns">📜 Historical Store Audit Transactions</option>
+              <option value="all">⚠️ ALL OPERATIONAL DATA (Forecast + Production + Store + MRR + Wastage)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Category / Unit Filter:</label>
+            <select class="form-control" id="clear-data-category">
+              <option value="ALL">🌐 All Units (05 Dry Foods, 02 Frozen, 01 Chicken)</option>
+              <option value="05">05. Dry Foods Only</option>
+              <option value="02">02. Frozen Foods Only</option>
+              <option value="01">01. Process Chicken Only</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Date Filter Mode:</label>
+            <select class="form-control" id="clear-data-range-type" onchange="document.getElementById('clear-date-pickers').style.display = this.value === 'custom' ? 'grid' : 'none';">
+              <option value="all">Wipe All Data for Selected Section (সম্পূর্ণ মুছুন)</option>
+              <option value="custom">Clear by Specific Date Range (নির্দিষ্ট তারিখ অনুযায়ী)</option>
+            </select>
+          </div>
+
+          <div id="clear-date-pickers" style="display:none; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1rem;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">From Date:</label>
+              <input type="date" class="form-control" id="clear-data-from-date">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">To Date:</label>
+              <input type="date" class="form-control" id="clear-data-to-date">
+            </div>
+          </div>
+
+          <div style="background:rgba(239, 68, 68, 0.1); border:1px solid rgba(239, 68, 68, 0.3); border-radius:0.5rem; padding:0.85rem; margin-top:1rem;">
+            <label class="form-label" style="color:var(--danger); font-weight:700;">
+              Safety Confirmation: Type <span style="background:#000; color:#fff; padding:2px 6px; border-radius:3px;">DELETE</span> below:
+            </label>
+            <input type="text" class="form-control" id="clear-data-confirm-input" placeholder="Type DELETE to confirm" required style="border-color:var(--danger); font-weight:700;">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-clear-data')">Cancel</button>
+          <button type="submit" class="btn btn-danger"><i class="fas fa-trash-alt"></i> Execute Cleanup</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Mobile App Installation Guide (PWA) -->
+  <div class="modal-backdrop" id="modal-mobile-app" onclick="if(event.target === this) hideModal('modal-mobile-app')">
+    <div class="modal-dialog" style="max-width:550px;">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-mobile-alt" style="color:var(--accent);"></i> Install Paragon Plan Mobile App</div>
+        <button class="modal-close" onclick="hideModal('modal-mobile-app')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="text-align:center; margin-bottom:1.25rem;">
+          <img src="/static/icon-192.png" alt="Paragon Plan App" style="width:72px; height:72px; border-radius:18px; box-shadow:0 8px 20px rgba(0,0,0,0.3); border:2px solid rgba(255,255,255,0.15);">
+          <h4 style="margin-top:0.75rem; font-size:1.15rem; font-weight:700;">Paragon Production & Store Plan</h4>
+          <p style="color:var(--text-muted); font-size:0.8rem;">Mobile Web Application & Dashboard</p>
+          
+          <button id="pwa-install-btn" class="btn btn-primary" style="margin-top:0.75rem; display:none;" onclick="triggerPwaInstall()">
+            <i class="fas fa-download"></i> Install App Now (অ্যাপ ইনস্টল করুন)
+          </button>
+        </div>
+
+        <div style="background:var(--bg-tertiary); border-radius:0.75rem; padding:1rem; margin-bottom:1rem; border:1px solid var(--border-color);">
+          <div style="font-weight:700; color:var(--text-main); margin-bottom:0.4rem; display:flex; align-items:center; gap:0.5rem;">
+            <i class="fab fa-android" style="color:#22c55e;"></i> Android মোবাইল থেকে ইনস্টল করার নিয়ম:
+          </div>
+          <ol style="padding-left:1.25rem; font-size:0.85rem; color:var(--text-muted); line-height:1.5;">
+            <li>আপনার ফোনে Chrome ব্রাউজার দিয়ে এই পোর্টালে ঢুকুন।</li>
+            <li>উপরে ডানদিকের <strong>থ্রি-ডট মেন্যু (⋮)</strong>-তে ট্যাপ করুন।</li>
+            <li><strong>"Install App"</strong> অথবা <strong>"Add to Home screen"</strong> সিলেক্ট করুন।</li>
+            <li>ফোনের হোম স্ক্রিনে Paragon Plan অ্যাপ আইকন তৈরি হয়ে যাবে এবং ফুল-স্ক্রিনে কাজ করবে!</li>
+          </ol>
+        </div>
+
+        <div style="background:var(--bg-tertiary); border-radius:0.75rem; padding:1rem; border:1px solid var(--border-color);">
+          <div style="font-weight:700; color:var(--text-main); margin-bottom:0.4rem; display:flex; align-items:center; gap:0.5rem;">
+            <i class="fab fa-apple" style="color:#38bdf8;"></i> iPhone / iOS থেকে ইনস্টল করার নিয়ম:
+          </div>
+          <ol style="padding-left:1.25rem; font-size:0.85rem; color:var(--text-muted); line-height:1.5;">
+            <li>Safari ব্রাউজারে এই পোর্টাল ওপেন করুন।</li>
+            <li>নিচের মাঝের <strong>Share আইকন</strong> (বক্স ও তীরচিহ্ন ⎋)-এ ট্যাপ করুন।</li>
+            <li>নিচে স্ক্রোল করে <strong>"Add to Home Screen"</strong> চাপুন।</li>
+            <li>হোম স্ক্রিনে অ্যাপ চলে আসবে এবং কোনো ইউআরএল বার ছাড়া ড্যাশবোর্ড দেখা যাবে!</li>
+          </ol>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" onclick="hideModal('modal-mobile-app')">Close (বন্ধ করুন)</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toast-container"></div>
+  <script src="/static/js/portal.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').then((reg) => {
+          console.log('Paragon Plan PWA Service Worker registered:', reg.scope);
+        }).catch((err) => {
+          console.log('Service Worker registration skipped:', err);
+        });
+      });
+    }
+
+    let deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      const btn = document.getElementById('pwa-install-btn');
+      if (btn) btn.style.display = 'inline-flex';
+    });
+
+    function triggerPwaInstall() {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then((choiceResult) => {
+          deferredPrompt = null;
+          const btn = document.getElementById('pwa-install-btn');
+          if (btn) btn.style.display = 'none';
+        });
+      }
+    }
+
+    function showMobileAppInstructions() {
+      showModal('modal-mobile-app');
+    }
+  </script>
+</body>
+</html>
