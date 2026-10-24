@@ -242,7 +242,7 @@
       <section id="view-dashboard" class="view-section active">
         <!-- Clickable KPI Cards with Deep Hyperlinks -->
         <div class="kpi-grid">
-          <div class="kpi-card" onclick="switchView('store', { subTab: 'inventory' })" title="Click to view Store Inventory details">
+          <div class="kpi-card" onclick="switchView('store', { subTab: 'inventory', filter: 'all' })" title="Click to view Store Inventory details">
             <div class="kpi-content">
               <div class="kpi-label">Store Inventory</div>
               <div class="kpi-value" id="kpi-total-items">0</div>
@@ -376,10 +376,61 @@
       <section id="view-forecast" class="view-section">
         <div class="action-bar">
           <div style="display:flex; align-items:center; gap:1rem;">
-            <div class="form-group" style="margin-bottom:0;">
-              <select class="form-control" id="forecast-month-select" style="min-width:170px;" onchange="loadForecastView()">
-                <option value="2026-07">📅 2026-07</option>
-              </select>
+            <!-- Unified Calendar Single Date & Range Selector (Requirement 10) -->
+            <div class="unified-date-dropdown-container">
+              <button type="button" class="btn btn-sm btn-outline unified-date-btn" onclick="toggleUnifiedDateDropdown(this)">
+                <i class="fas fa-calendar-alt" style="color:var(--primary);"></i>
+                <span class="unified-date-label">📅 July 2026</span>
+                <i class="fas fa-chevron-down" style="font-size:0.65rem; margin-left:3px; opacity:0.7;"></i>
+              </button>
+              <div class="unified-date-dropdown-menu">
+                <div class="date-dropdown-mode-tabs">
+                  <button type="button" class="date-mode-btn active" onclick="setDropdownDateMode('month', this)">Month</button>
+                  <button type="button" class="date-mode-btn" onclick="setDropdownDateMode('single', this)">Single Date</button>
+                  <button type="button" class="date-mode-btn" onclick="setDropdownDateMode('range', this)">Date Range</button>
+                </div>
+                <!-- Month Mode -->
+                <div class="pane-month">
+                  <label class="form-label" style="font-size:0.75rem; margin-bottom:3px;">Select Month:</label>
+                  <select class="form-control form-control-sm unified-month-select" id="forecast-month-select">
+                    <option value="2026-07" selected>📅 2026-07 (July 2026)</option>
+                    <option value="2026-08">📅 2026-08 (August 2026)</option>
+                    <option value="2026-06">📅 2026-06 (June 2026)</option>
+                  </select>
+                </div>
+                <!-- Single Date Mode -->
+                <div class="pane-single" style="display:none;">
+                  <label class="form-label" style="font-size:0.75rem; margin-bottom:3px;">Specific Date (নির্দিষ্ট দিন):</label>
+                  <input type="date" class="form-control form-control-sm unified-date-single-input" value="2026-07-24">
+                  <div class="date-quick-chips">
+                    <button type="button" class="chip-btn" onclick="setQuickDateInput('today', this)">Today</button>
+                    <button type="button" class="chip-btn" onclick="setQuickDateInput('yesterday', this)">Yesterday</button>
+                  </div>
+                </div>
+                <!-- Date Range Mode -->
+                <div class="pane-range" style="display:none;">
+                  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.4rem;">
+                    <div>
+                      <label class="form-label" style="font-size:0.72rem; margin-bottom:2px;">From Date:</label>
+                      <input type="date" class="form-control form-control-sm unified-date-from-input" value="2026-07-01">
+                    </div>
+                    <div>
+                      <label class="form-label" style="font-size:0.72rem; margin-bottom:2px;">To Date:</label>
+                      <input type="date" class="form-control form-control-sm unified-date-to-input" value="2026-07-31">
+                    </div>
+                  </div>
+                  <div class="date-quick-chips">
+                    <button type="button" class="chip-btn" onclick="setQuickDateRange('week', this)">Last 7 Days</button>
+                    <button type="button" class="chip-btn" onclick="setQuickDateRange('mtd', this)">Month to Date</button>
+                    <button type="button" class="chip-btn" onclick="setQuickDateRange('full_month', this)">Full Month</button>
+                  </div>
+                </div>
+                <div style="margin-top:0.75rem; text-align:right;">
+                  <button type="button" class="btn btn-xs btn-primary" onclick="confirmUnifiedDateFilter(this)" style="padding:0.35rem 0.75rem;">
+                    <i class="fas fa-filter"></i> Apply Filter (বাছাই করুন)
+                  </button>
+                </div>
+              </div>
             </div>
             <div style="font-size:0.85rem; color:var(--text-muted);">
               Total Cartons: <strong id="forecast-total-cartons" style="color:var(--primary); font-size:1.1rem;">0</strong>
@@ -454,9 +505,67 @@
       <!-- ================= 3. PRODUCTION PLANNING VIEW ================= -->
       <section id="view-production" class="view-section">
         <div class="action-bar">
-          <div>
-            <h2 style="font-size:1.1rem; font-weight:700;">Production Plans & Actual Output Tracking</h2>
-            <p style="font-size:0.75rem; color:var(--text-muted);">Compare sales forecast with opening finished goods stock and track plant output.</p>
+          <div style="display:flex; align-items:center; gap:1rem;">
+            <div>
+              <h2 style="font-size:1.1rem; font-weight:700;">Production Plans & Actual Output Tracking</h2>
+              <p style="font-size:0.75rem; color:var(--text-muted);">Compare sales forecast with opening finished goods stock and track plant output.</p>
+            </div>
+            <!-- Unified Calendar Single Date & Range Selector (Requirement 10) -->
+            <div class="unified-date-dropdown-container">
+              <button type="button" class="btn btn-sm btn-outline unified-date-btn" onclick="toggleUnifiedDateDropdown(this)">
+                <i class="fas fa-calendar-alt" style="color:var(--primary);"></i>
+                <span class="unified-date-label">📅 July 2026</span>
+                <i class="fas fa-chevron-down" style="font-size:0.65rem; margin-left:3px; opacity:0.7;"></i>
+              </button>
+              <div class="unified-date-dropdown-menu">
+                <div class="date-dropdown-mode-tabs">
+                  <button type="button" class="date-mode-btn active" onclick="setDropdownDateMode('month', this)">Month</button>
+                  <button type="button" class="date-mode-btn" onclick="setDropdownDateMode('single', this)">Single Date</button>
+                  <button type="button" class="date-mode-btn" onclick="setDropdownDateMode('range', this)">Date Range</button>
+                </div>
+                <!-- Month Mode -->
+                <div class="pane-month">
+                  <label class="form-label" style="font-size:0.75rem; margin-bottom:3px;">Select Month:</label>
+                  <select class="form-control form-control-sm unified-month-select" id="prod-month-select">
+                    <option value="2026-07" selected>📅 2026-07 (July 2026)</option>
+                    <option value="2026-08">📅 2026-08 (August 2026)</option>
+                    <option value="2026-06">📅 2026-06 (June 2026)</option>
+                  </select>
+                </div>
+                <!-- Single Date Mode -->
+                <div class="pane-single" style="display:none;">
+                  <label class="form-label" style="font-size:0.75rem; margin-bottom:3px;">Specific Date (নির্দিষ্ট দিন):</label>
+                  <input type="date" class="form-control form-control-sm unified-date-single-input" value="2026-07-24">
+                  <div class="date-quick-chips">
+                    <button type="button" class="chip-btn" onclick="setQuickDateInput('today', this)">Today</button>
+                    <button type="button" class="chip-btn" onclick="setQuickDateInput('yesterday', this)">Yesterday</button>
+                  </div>
+                </div>
+                <!-- Date Range Mode -->
+                <div class="pane-range" style="display:none;">
+                  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.4rem;">
+                    <div>
+                      <label class="form-label" style="font-size:0.72rem; margin-bottom:2px;">From Date:</label>
+                      <input type="date" class="form-control form-control-sm unified-date-from-input" value="2026-07-01">
+                    </div>
+                    <div>
+                      <label class="form-label" style="font-size:0.72rem; margin-bottom:2px;">To Date:</label>
+                      <input type="date" class="form-control form-control-sm unified-date-to-input" value="2026-07-31">
+                    </div>
+                  </div>
+                  <div class="date-quick-chips">
+                    <button type="button" class="chip-btn" onclick="setQuickDateRange('week', this)">Last 7 Days</button>
+                    <button type="button" class="chip-btn" onclick="setQuickDateRange('mtd', this)">Month to Date</button>
+                    <button type="button" class="chip-btn" onclick="setQuickDateRange('full_month', this)">Full Month</button>
+                  </div>
+                </div>
+                <div style="margin-top:0.75rem; text-align:right;">
+                  <button type="button" class="btn btn-xs btn-primary" onclick="confirmUnifiedDateFilter(this)" style="padding:0.35rem 0.75rem;">
+                    <i class="fas fa-filter"></i> Apply Filter (বাছাই করুন)
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
           <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
             <button class="btn btn-outline" onclick="downloadProductionTemplate()">
@@ -468,7 +577,10 @@
             <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('production')">
               <i class="fas fa-file-excel" style="color:var(--success);"></i> Export Plans
             </button>
-            <button class="btn btn-outline" onclick="openPoloxySyncModal()" title="Pull output from Poloxy ERP with Date/Range Selection">
+            <button class="btn btn-outline" onclick="openFloorStockModal()" style="border-color:var(--cyan); color:var(--cyan);" title="Manage Material Floor Stock Issued to Production">
+              <i class="fas fa-industry"></i> Floor Stock (ফ্লোর স্টক)
+            </button>
+            <button class="btn btn-outline" onclick="openPoloxySyncModal()" title="Pull output and opening stock from Poloxy ERP (Rules 8 & 9)">
               <i class="fas fa-sync-alt" style="color:var(--primary);"></i> Pull Poloxy ERP
             </button>
             <button class="btn btn-primary" onclick="openCreatePlanModal()">
@@ -492,9 +604,12 @@
               <thead>
                 <tr>
                   <th>Plan No</th>
+                  <th>Plan Date</th>
                   <th>Finished Good (SKU)</th>
-                  <th>Target Plan</th>
-                  <th>Actual Produced</th>
+                  <th>Opening / In-Hand Stock (Poloxy)</th>
+                  <th>Planned Target</th>
+                  <th>Actual Produced (Poloxy)</th>
+                  <th>Variance</th>
                   <th>Achievement %</th>
                   <th>Status</th>
                   <th>Store Requisition</th>
@@ -569,6 +684,9 @@
               <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('store')">
                 <i class="fas fa-file-excel" style="color:var(--success);"></i> Export Store Excel
               </button>
+              <button class="btn btn-sm btn-outline" onclick="openFloorStockModal()" style="border-color:var(--cyan); color:var(--cyan);" title="View & Record Production Floor Stock (RM/PM)">
+                <i class="fas fa-industry"></i> Floor Stock (ফ্লোর স্টক)
+              </button>
               <button class="btn btn-sm btn-danger" onclick="triggerAutoReplenishment()">
                 <i class="fas fa-magic"></i> Auto Replenish
               </button>
@@ -587,7 +705,9 @@
                     <th>Material Name</th>
                     <th>Type</th>
                     <th>FSN Status</th>
-                    <th>Current Stock</th>
+                    <th>Store Stock (Godown) *</th>
+                    <th>Floor Stock (WIP)</th>
+                    <th>Total In-Plant</th>
                     <th>Safety Stock</th>
                     <th>In-Transit</th>
                     <th>Status</th>
@@ -626,7 +746,15 @@
               <h3 style="font-size:1rem; font-weight:700;">Material Receive Reports (MRR) Stock Entry</h3>
               <p style="font-size:0.75rem; color:var(--text-muted);">Inward goods entries with reference to MRR, supplier, chalan, and vehicle.</p>
             </div>
-            <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('mrr')"><i class="fas fa-file-excel" style="color:var(--success);"></i> Export MRR Excel</button>
+            <button class="btn btn-sm btn-outline" onclick="downloadMRRBlankTemplate()">
+              <i class="fas fa-file-download"></i> Blank Template
+            </button>
+            <button class="btn btn-sm btn-primary" onclick="openBulkMRRModal()">
+              <i class="fas fa-file-upload"></i> Bulk Upload MRR
+            </button>
+            <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('mrr')">
+              <i class="fas fa-file-excel" style="color:var(--success);"></i> Export MRR Excel
+            </button>
             <button class="btn btn-success" onclick="openCreateMRRModal()">
               <i class="fas fa-plus"></i> + New MRR Stock Entry
             </button>
@@ -751,6 +879,7 @@
             <button class="tab-btn" data-tab="bom" onclick="setAdminTab('bom')">BOM Formulation Builder</button>
             <button class="tab-btn" data-tab="users" onclick="setAdminTab('users')">User Management (RBAC)</button>
             <button class="tab-btn" data-tab="erp" onclick="setAdminTab('erp')">Poloxy ERP Settings</button>
+            <button class="tab-btn" data-tab="cloud" onclick="setAdminTab('cloud')"><i class="fas fa-cloud"></i> Cloud DB (Turso)</button>
           </div>
 
           <div style="display:flex; gap:0.5rem;">
@@ -910,6 +1039,51 @@
               <button class="btn btn-primary" onclick="saveERPSettings()" style="margin-top:0.5rem;">
                 <i class="fas fa-save"></i> Save ERP Configuration
               </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 6: Turso Cloud Database Integration -->
+        <div id="admin-tab-cloud" class="admin-tab-content" style="display:none;">
+          <div class="card" style="max-width:760px;">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+              <div class="card-title">
+                <i class="fas fa-cloud" style="color:var(--primary);"></i>
+                Turso Cloud Database Integration (Multi-User Live Sync)
+              </div>
+              <span id="turso-status-badge" class="pill pill-low"><i class="fas fa-circle"></i> Local SQLite Mode</span>
+            </div>
+            <div style="padding:0.75rem 0;">
+              <div style="background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.2); border-radius:8px; padding:0.85rem 1rem; margin-bottom:1.2rem; font-size:0.82rem; line-height:1.5;">
+                <strong style="color:var(--text-main);"><i class="fas fa-network-wired" style="color:var(--primary); margin-right:4px;"></i> মাল্টি-ইউজার ক্লাউড সিঙ্ক সুবিধা:</strong><br>
+                Turso Cloud সক্রিয় থাকলে সেলস টিম, প্রোডাকশন টিম এবং স্টোর টিম প্রত্যেকে নিজস্ব ভিন্ন ভিন্ন ইন্টারনেট বা মোবাইল ডাটা ব্যবহার করেও একই সাথে রিয়েলটাইমে ডাটা আদান-প্রদান করতে পারবেন।
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Turso Database URL:</label>
+                <input type="text" class="form-control" id="turso-cfg-url" placeholder="https://paragon-planning-yourorg.turso.io" style="font-family:monospace; font-size:0.88rem;">
+                <small style="color:var(--text-dim); font-size:0.72rem;">Turso ড্যাশবোর্ড থেকে প্রাপ্ত Database URL (e.g. https://... or libsql://...)</small>
+              </div>
+
+              <div class="form-group" style="margin-top:0.75rem;">
+                <label class="form-label">Turso Auth Token (Bearer Token):</label>
+                <input type="password" class="form-control" id="turso-cfg-token" placeholder="eyJhbGciOiJFZERTQ..." style="font-family:monospace; font-size:0.88rem;">
+                <small style="color:var(--text-dim); font-size:0.72rem;">Turso ড্যাশবোর্ড থেকে Create Token বাটনে ক্লিক করে পাওয়া সিকিউর টোকেনটি এখানে দিন।</small>
+              </div>
+
+              <div style="display:flex; gap:0.6rem; margin-top:1.2rem; flex-wrap:wrap;">
+                <button class="btn btn-outline" id="btn-test-turso" onclick="testTursoConnectionUI()">
+                  <i class="fas fa-plug"></i> Test Cloud Connection
+                </button>
+                <button class="btn btn-primary" id="btn-save-turso" onclick="saveTursoConfigUI()">
+                  <i class="fas fa-save"></i> Save & Activate Cloud DB
+                </button>
+                <button class="btn btn-success" id="btn-migrate-turso" onclick="migrateLocalToTursoUI()" style="background:#059669; border-color:#059669; color:#fff;">
+                  <i class="fas fa-upload"></i> Migrate Local DB to Cloud (১ ক্লিকে লোকাল ডাটা ক্লাউডে তুলুন)
+                </button>
+              </div>
+
+              <div id="turso-test-result" style="margin-top:1rem; font-size:0.82rem; display:none;"></div>
             </div>
           </div>
         </div>
@@ -1537,18 +1711,37 @@
       </div>
       <form id="form-poloxy-sync" onsubmit="event.preventDefault(); submitPoloxySync();">
         <div class="modal-body">
-          <!-- Live Engine Badge -->
-          <div style="background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.25); border-radius:8px; padding:0.75rem 1rem; margin-bottom:1.2rem; display:flex; align-items:center; justify-content:space-between;">
-            <div>
-              <div style="font-size:0.85rem; font-weight:700; color:var(--text-main); display:flex; align-items:center; gap:0.4rem;">
-                <span class="pill pill-fast" style="font-size:0.7rem; padding:2px 6px;">⚡ Smart Engine</span>
-                <span id="poloxy-sync-unit-label">Unit 05 (Dry Foods)</span>
-              </div>
-              <div style="font-size:0.75rem; color:var(--text-muted); margin-top:3px;" id="poloxy-sync-wc-label">
-                Work Center: Dry Food Packing
+          <!-- Live Engine Parameter Badge (Rules 8 & 9) -->
+          <div style="background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.25); border-radius:8px; padding:0.85rem 1rem; margin-bottom:1.2rem;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem;">
+              <span class="pill pill-fast" style="font-size:0.7rem; padding:2px 6px;">⚡ Smart Poloxy Live Engine</span>
+              <span class="pill pill-safe" style="font-size:0.72rem;">Zero Cache • Live Direct</span>
+            </div>
+            <div style="font-size:0.85rem; font-weight:700; color:var(--text-main);" id="poloxy-sync-unit-label">
+              Unit 05 (Dry Foods)
+            </div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:3px; line-height:1.4;">
+              <div id="poloxy-sync-wc-label"><strong>Output Work Center (Rule 8):</strong> Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa) [Main Product]</div>
+              <div id="poloxy-sync-godown-label" style="color:var(--primary); font-weight:600; margin-top:2px;">
+                <strong>Opening Stock Godown (Rule 9):</strong> 05. Dry Food Factory Godown [Group: Cut-Up-Part]
               </div>
             </div>
-            <span class="pill pill-safe" style="font-size:0.72rem;">Live Direct (No-Cache)</span>
+          </div>
+
+          <!-- Pull Target Action Selector -->
+          <div class="form-group" style="margin-bottom:1rem;">
+            <label class="form-label" style="font-weight:600; font-size:0.85rem;">Select ERP Extraction Action (কোন ডাটা পুল করবেন):</label>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:0.4rem; margin-top:0.35rem;">
+              <button type="button" class="btn btn-outline sync-action-btn active" id="btn-sync-action-both" onclick="setSyncAction('both')" style="font-size:0.75rem; padding:0.5rem 0.2rem; justify-content:center; text-align:center;">
+                <i class="fas fa-layer-group"></i> Both (ওপেনিং + আউটপুট)
+              </button>
+              <button type="button" class="btn btn-outline sync-action-btn" id="btn-sync-action-opening" onclick="setSyncAction('opening_stock')" style="font-size:0.75rem; padding:0.5rem 0.2rem; justify-content:center; text-align:center;">
+                <i class="fas fa-warehouse"></i> Opening Stock (Rule 9)
+              </button>
+              <button type="button" class="btn btn-outline sync-action-btn" id="btn-sync-action-output" onclick="setSyncAction('actual_output')" style="font-size:0.75rem; padding:0.5rem 0.2rem; justify-content:center; text-align:center;">
+                <i class="fas fa-cogs"></i> Output (Rule 8)
+              </button>
+            </div>
           </div>
 
           <!-- Date Mode Selector: Single Date vs Date Range -->
@@ -1569,9 +1762,18 @@
             <div class="form-group">
               <label class="form-label">Select Production Date (প্রোডাকশনের তারিখ):</label>
               <div style="display:flex; gap:0.5rem; align-items:center;">
-                <input type="date" class="form-control" id="sync-single-date" style="font-size:0.95rem; font-weight:600;">
+                <input type="date" class="form-control" id="sync-single-date" style="font-size:0.95rem; font-weight:600;" onchange="updateRule9DateHelper()">
                 <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickDate('today')" style="white-space:nowrap;">Today</button>
                 <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickDate('yesterday')" style="white-space:nowrap;">Yesterday</button>
+              </div>
+            </div>
+            <!-- Dynamic Rule 9 Explanation Helper -->
+            <div id="rule9-date-helper-box" style="background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; padding:0.55rem 0.75rem; margin-top:0.4rem; font-size:0.75rem; line-height:1.4;">
+              <div style="font-weight:700; color:#b45309; display:flex; align-items:center; gap:4px;">
+                <i class="fas fa-info-circle"></i> Rule 9 Opening Stock Extraction Logic:
+              </div>
+              <div id="rule9-date-text" style="color:var(--text-main); margin-top:2px;">
+                পরিকল্পিত তারিখ: <strong id="r9-target-date">24-Oct-2026</strong>-এর জন্য Poloxy গোডাউন থেকে <strong id="r9-prev-date">23-Oct-2026</strong>-এর <strong>Closing Stock</strong> (অথবা <strong id="r9-target-date-2">24-Oct-2026</strong>-এর <strong>Opening Stock</strong>) ইন-হ্যান্ড ব্যালেন্স হিসেবে নেওয়া হবে।
               </div>
             </div>
           </div>
@@ -2146,5 +2348,122 @@
       showModal('modal-mobile-app');
     }
   </script>
+
+  <!-- ================= MODAL: QUICK VIEW BILL OF MATERIALS (BOM) ================= -->
+  <div class="modal-backdrop" id="modal-view-bom">
+    <div class="modal-dialog" style="max-width:740px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" style="display:flex; align-items:center; gap:0.5rem;">
+            <i class="fas fa-sitemap" style="color:var(--primary);"></i>
+            <span id="quick-bom-title">Bill of Materials (BOM) Formulation</span>
+          </div>
+          <div style="font-size:0.78rem; color:var(--text-muted); margin-top:3px;" id="quick-bom-subtitle">
+            Finished Good Formulation & Standard RM-PM Requirement
+          </div>
+        </div>
+        <button class="modal-close" onclick="hideModal('modal-view-bom')">&times;</button>
+      </div>
+      <div class="modal-body" id="quick-bom-body">
+        <div style="text-align:center; padding:2rem;"><i class="fas fa-spinner fa-spin"></i> Loading formulation...</div>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between;">
+        <div id="quick-bom-admin-link"></div>
+        <button type="button" class="btn btn-outline" onclick="hideModal('modal-view-bom')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: RM-PM MATERIAL STOCK AGING BREAKDOWN ================= -->
+  <div class="modal-backdrop" id="modal-material-aging">
+    <div class="modal-dialog" style="max-width:820px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" style="display:flex; align-items:center; gap:0.5rem;">
+            <i class="fas fa-history" style="color:var(--cyan);"></i>
+            <span id="aging-modal-title">Material Stock Aging & Batch Receipt Dates</span>
+          </div>
+          <div style="font-size:0.78rem; color:var(--text-muted); margin-top:3px;" id="aging-modal-subtitle">
+            FIFO Batch Breakdown, Receiving Dates and Shelf-Life Aging Brackets
+          </div>
+        </div>
+        <button class="modal-close" onclick="hideModal('modal-material-aging')">&times;</button>
+      </div>
+      <div class="modal-body" id="aging-modal-body">
+        <div style="text-align:center; padding:2rem;"><i class="fas fa-spinner fa-spin"></i> Loading batch history & aging analysis...</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="hideModal('modal-material-aging')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: BULK UPLOAD MRR STOCK INWARD ================= -->
+  <div class="modal-backdrop" id="modal-bulk-mrr">
+    <div class="modal-dialog" style="max-width:540px;">
+      <div class="modal-header">
+        <div class="modal-title" style="display:flex; align-items:center; gap:0.5rem;">
+          <i class="fas fa-file-excel" style="color:var(--success);"></i>
+          <span>Bulk Upload MRR Stock Inward</span>
+        </div>
+        <button class="modal-close" onclick="hideModal('modal-bulk-mrr')">&times;</button>
+      </div>
+      <form id="form-bulk-mrr" onsubmit="event.preventDefault(); submitBulkMRR();">
+        <div class="modal-body">
+          <div style="background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:8px; padding:0.85rem; margin-bottom:1rem; font-size:0.82rem;">
+            <strong><i class="fas fa-info-circle" style="color:var(--primary);"></i> Instructions:</strong>
+            <ol style="margin-left:1.2rem; margin-top:0.35rem; line-height:1.5;">
+              <li>Download the official blank Excel template with solid ARGB cell shading.</li>
+              <li>Fill in Item Code, MRR Date, Supplier, Challan, and Received Quantity.</li>
+              <li>Save and upload the completed Excel file below.</li>
+            </ol>
+            <div style="margin-top:0.6rem;">
+              <button type="button" class="btn btn-xs btn-outline" onclick="downloadMRRBlankTemplate()">
+                <i class="fas fa-file-download"></i> Download Blank Template (.xlsx)
+              </button>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label" style="font-weight:600;">Select Excel File (.xlsx):</label>
+            <input type="file" class="form-control" id="bulk-mrr-file" accept=".xlsx, .xls" required>
+          </div>
+          
+          <div id="bulk-mrr-status" style="margin-top:0.75rem; font-size:0.82rem; display:none;"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-bulk-mrr')">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-submit-bulk-mrr">
+            <i class="fas fa-cloud-upload-alt"></i> Upload & Process Inward
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: PRODUCTION FLOOR STOCK REGISTER ================= -->
+  <div class="modal-backdrop" id="modal-floor-stock">
+    <div class="modal-dialog" style="max-width:880px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" style="display:flex; align-items:center; gap:0.5rem;">
+            <i class="fas fa-industry" style="color:var(--cyan);"></i>
+            <span>Production Floor Stock Register (ফ্লোর স্টক)</span>
+          </div>
+          <div style="font-size:0.78rem; color:var(--text-muted); margin-top:3px;">
+            Materials issued to production plant floor not yet consumed into finished goods (WIP Inventory)
+          </div>
+        </div>
+        <button class="modal-close" onclick="hideModal('modal-floor-stock')">&times;</button>
+      </div>
+      <div class="modal-body" id="floor-stock-modal-body">
+        <div style="text-align:center; padding:2rem;"><i class="fas fa-spinner fa-spin"></i> Loading production floor stock...</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="hideModal('modal-floor-stock')">Close</button>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>

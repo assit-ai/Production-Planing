@@ -510,9 +510,10 @@ function switchView(viewName, subOptions = {}) {
     case 'forecast': loadForecastView(); break;
     case 'production': loadProductionView(); break;
     case 'store': 
-      if (subOptions.subTab) switchStoreSubTab(subOptions.subTab);
-      if (subOptions.filter) setStoreFilter(subOptions.filter);
-      loadStoreView(); 
+      const targetSubTab = subOptions.subTab || 'inventory';
+      const targetFilter = subOptions.filter || 'all';
+      switchStoreSubTab(targetSubTab);
+      setStoreFilter(targetFilter);
       break;
     case 'procurement': loadProcurementView(); break;
     case 'master_bom': 
@@ -824,6 +825,7 @@ function renderForecastTable(items) {
   if (!tbody) return;
 
   const canEdit = canUserEdit('forecast');
+  const isSuperAdmin = AppState.currentUser?.role === 'Super Admin';
   let totalCtn = 0;
   let totalPcs = 0;
 
@@ -857,10 +859,16 @@ function renderForecastTable(items) {
         <td class="forecast-pcs-display" style="text-align:right; font-weight:700; color:var(--primary);">
           ${(it.forecast_pcs || 0).toLocaleString()} ${it.uom_default || 'Packets'}
         </td>
-        <td>
-          <button class="btn btn-sm btn-outline" onclick="openBOMBuilder(${it.sku_id}, '${it.sku_name.replace(/'/g, "\\'")}')">
-            <i class="fas fa-sitemap"></i> View BOM
-          </button>
+        <td style="text-align:center;">
+          ${isSuperAdmin ? `
+            <button class="btn btn-sm btn-outline" onclick="openForecastBOMModal(${it.sku_id}, '${it.sku_name.replace(/'/g, "\\'")}')" title="View Bill of Materials Specification (Super Admin Only)">
+              <i class="fas fa-sitemap" style="color:var(--primary);"></i> View BOM
+            </button>
+          ` : `
+            <span class="pill pill-low" style="font-size:0.7rem; opacity:0.65; cursor:not-allowed;" title="BOM access is strictly restricted to Super Admin only">
+              <i class="fas fa-lock" style="font-size:0.65rem;"></i> Super Admin Only
+            </span>
+          `}
         </td>
       </tr>
     `;
@@ -1048,21 +1056,48 @@ function renderProductionPlans(plans) {
 
     const plannedVal = isCarton ? p.planned_ctn : (p.planned_pcs || p.planned_ctn * p.ctn_size);
     const actualVal = isCarton ? p.actual_produced_ctn : (p.actual_produced_pcs || p.actual_produced_ctn * p.ctn_size);
+    const openVal = isCarton ? (p.opening_stock_ctn || 0.0) : (p.opening_stock_pcs || (p.opening_stock_ctn || 0.0) * p.ctn_size);
     const uomLabel = isCarton ? 'Ctn' : (p.uom_default || 'Pcs');
+
+    let prevDateLabel = 'Prev Day';
+    let planDateLabel = p.plan_date || '';
+    if (p.plan_date) {
+      try {
+        const pd = new Date(p.plan_date);
+        planDateLabel = pd.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+        pd.setDate(pd.getDate() - 1);
+        prevDateLabel = pd.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      } catch (e) {}
+    }
 
     return `
       <tr>
         <td><strong>${p.plan_no}</strong></td>
+        <td><span style="font-weight:600; font-size:0.82rem;">📅 ${p.plan_date || '-'}</span></td>
         <td>
           <div style="font-weight:600;">${p.sku_name}</div>
           <div style="font-size:0.72rem; color:var(--text-dim);">${p.sku_code} • ${p.category}</div>
         </td>
+        <td>
+          <div style="font-weight:700; color:var(--text-main); font-size:0.95rem;">
+            <i class="fas fa-warehouse" style="color:var(--primary); font-size:0.8rem; margin-right:3px;"></i>
+            ${openVal.toLocaleString()} ${uomLabel}
+          </div>
+          <div style="font-size:0.68rem; color:var(--text-dim);" title="Poloxy Godown: ${p.godown_name || 'Godown'} [Group: Cut-Up-Part]">
+            ${p.plan_date ? `Closing: ${prevDateLabel} / Open: ${planDateLabel}` : (p.godown_name ? p.godown_name.split(' ')[1] || p.godown_name : 'Poloxy In-Hand')}
+          </div>
+        </td>
         <td><strong>${plannedVal.toLocaleString()}</strong> ${uomLabel}</td>
         <td>
-          <div style="font-weight:700; color:${ach >= 80 ? 'var(--success)' : 'var(--warning)'};">${actualVal.toLocaleString()} ${uomLabel}</div>
-          <div style="font-size:0.7rem; color:var(--text-dim);">Var: ${p.variance_ctn} Ctn</div>
+          <div style="font-weight:700; color:${ach >= 80 ? 'var(--success)' : 'var(--warning)'}; font-size:0.95rem;">${actualVal.toLocaleString()} ${uomLabel}</div>
+          ${p.output_amount ? `<div style="font-size:0.68rem; color:var(--success); font-weight:600;">৳ ${p.output_amount.toLocaleString()}</div>` : ''}
         </td>
-        <td style="width:130px;">
+        <td>
+          <span style="font-weight:600; color:${p.variance_ctn >= 0 ? 'var(--success)' : 'var(--danger)'};">
+            ${p.variance_ctn >= 0 ? '+' : ''}${p.variance_ctn} Ctn
+          </span>
+        </td>
+        <td style="width:110px;">
           <div style="display:flex; justify-content:space-between; font-size:0.72rem; margin-bottom:3px;">
             <span>${ach}%</span>
           </div>
@@ -1082,7 +1117,7 @@ function renderProductionPlans(plans) {
           <div style="display:flex; gap:0.35rem;">
             ${canUserEdit('production') ? `
               <button class="btn btn-sm btn-outline" title="Update Output" onclick="openUpdateOutputModal(${p.id}, '${p.plan_no}', ${p.planned_ctn}, ${p.actual_produced_ctn})">
-                <i class="fas fa-edit"></i> Update
+                <i class="fas fa-edit"></i> Output
               </button>
             ` : `<span class="pill pill-safe" style="font-size:0.7rem;"><i class="fas fa-lock"></i> Read Only</span>`}
           </div>
@@ -1107,14 +1142,22 @@ function openPoloxySyncModal() {
     'ALL': 'All Production Units'
   };
   const workCenters = {
-    '05': 'Dry Food Packing (Bakery Puffed Sauce Chanachur & Lachsa)',
-    '02': 'Frozen Finished Goods Plant',
-    '01': 'Process Chicken Plant',
+    '05': 'Dry Food Packing (Bakery Puffed Sauce Chanachur & Lachsa) [Main Product]',
+    '02': 'Frozen Finished Goods [Main Product]',
+    '01': 'Process Chicken Plant [Main Product]',
     'ALL': 'Multi-Work Center'
+  };
+  const godowns = {
+    '05': '05. Dry Food Factory Godown [Group: Cut-Up-Part]',
+    '02': '02. Frozen Foods Factory Godown [Group: Cut-Up-Part]',
+    '01': '01. Process Chicken Factory Godown [Group: Cut-Up-Part]',
+    'ALL': 'Respective Factory Godowns [Group: Cut-Up-Part]'
   };
 
   if (unitLabel) unitLabel.textContent = unitNames[cat] || `Unit ${cat}`;
-  if (wcLabel) wcLabel.textContent = `Work Center: ${workCenters[cat] || 'Paragon Plant'}`;
+  if (wcLabel) wcLabel.innerHTML = `<strong>Output Work Center (Rule 8):</strong> ${workCenters[cat] || 'Paragon Plant'}`;
+  const godownLabel = document.getElementById('poloxy-sync-godown-label');
+  if (godownLabel) godownLabel.innerHTML = `<strong>Opening Stock Godown (Rule 9):</strong> ${godowns[cat] || '05. Dry Food Factory Godown [Group: Cut-Up-Part]'}`;
 
   // Default date setup
   const today = new Date().toISOString().split('T')[0];
@@ -1122,7 +1165,10 @@ function openPoloxySyncModal() {
   const rFrom = document.getElementById('sync-range-from');
   const rTo = document.getElementById('sync-range-to');
 
-  if (sDate) sDate.value = today;
+  if (sDate) {
+    sDate.value = today;
+    updateRule9DateHelper();
+  }
   if (rFrom) rFrom.value = `${AppState.selectedMonth}-01`;
   if (rTo) rTo.value = today;
 
@@ -1143,6 +1189,32 @@ function openPoloxySyncModal() {
   showModal('modal-poloxy-sync');
 }
 
+function updateRule9DateHelper() {
+  const sDate = document.getElementById('sync-single-date');
+  const cat = AppState.selectedCategory;
+  const godownsShort = {
+    '05': '05. Dry Food Factory Godown',
+    '02': '02. Frozen Foods Factory Godown',
+    '01': '01. Process Chicken Factory Godown',
+    'ALL': 'Factory Godown'
+  };
+  const gName = godownsShort[cat] || 'Factory Godown';
+  const textEl = document.getElementById('rule9-date-text');
+
+  if (!sDate || !sDate.value) return;
+  try {
+    const parts = sDate.value.split('-');
+    const td = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    const pd = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    pd.setDate(pd.getDate() - 1);
+    const fmtTarget = td.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const fmtPrev = pd.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    if (textEl) {
+      textEl.innerHTML = `পরিকল্পিত তারিখ: <strong>${fmtTarget}</strong> এর জন্য <strong>${gName}</strong> [Cut-Up-Part] থেকে <strong>${fmtPrev}</strong>-এর <strong>Closing Stock</strong> (অথবা <strong>${fmtTarget}</strong>-এর <strong>Opening Stock</strong>) ইন-হ্যান্ড ব্যালেন্স হিসেবে নেওয়া হবে।`;
+    }
+  } catch (e) {}
+}
+
 function setSyncDateMode(mode) {
   syncDateMode = mode;
   const btnSingle = document.getElementById('btn-sync-mode-single');
@@ -1157,6 +1229,7 @@ function setSyncDateMode(mode) {
 
   if (boxSingle) boxSingle.style.display = (mode === 'single') ? 'block' : 'none';
   if (boxRange) boxRange.style.display = (mode === 'range') ? 'block' : 'none';
+  if (mode === 'single') updateRule9DateHelper();
 }
 
 function setSyncQuickDate(type) {
@@ -1169,6 +1242,7 @@ function setSyncQuickDate(type) {
     d.setDate(d.getDate() - 1);
     sDate.value = d.toISOString().split('T')[0];
   }
+  updateRule9DateHelper();
 }
 
 function setSyncQuickRange(type) {
@@ -1202,6 +1276,7 @@ async function submitPoloxySync() {
     category_code: AppState.selectedCategory,
     month: AppState.selectedMonth,
     mode: syncDateMode,
+    action: (typeof syncActionType !== 'undefined' ? syncActionType : 'both'),
     _nocache: Date.now() // Strict cache-busting token
   };
 
@@ -1339,9 +1414,19 @@ async function loadStoreStock() {
 }
 
 function setStoreFilter(filterType, btn) {
-  AppState.storeFilter = filterType;
-  document.querySelectorAll('#store-tabs .tab-btn').forEach(b => b.classList.remove('active'));
+  AppState.storeFilter = filterType || 'all';
+  document.querySelectorAll('#store-tabs .tab-btn').forEach(b => {
+    b.classList.remove('active');
+    const oc = b.getAttribute('onclick') || '';
+    if (oc.includes(`'${AppState.storeFilter}'`)) {
+      b.classList.add('active');
+    }
+  });
   if (btn) btn.classList.add('active');
+  const searchInp = document.getElementById('store-search-input');
+  if (searchInp && AppState.storeFilter === 'all') {
+    searchInp.value = '';
+  }
   loadStoreStock();
 }
 
@@ -1359,6 +1444,9 @@ function renderStoreTable(items) {
     if (m.stock_status === 'Critical') pillClass = 'pill-critical';
     else if (m.stock_status === 'Low') pillClass = 'pill-low';
 
+    const floorStock = m.floor_stock || 0.0;
+    const totalPlant = m.total_plant_stock || (m.current_stock + floorStock);
+
     return `
       <tr>
         <td><strong>${m.item_code}</strong></td>
@@ -1373,9 +1461,16 @@ function renderStoreTable(items) {
           </span>
         </td>
         <td>
-          <span style="font-weight:700; color:${m.stock_status === 'Critical' ? 'var(--danger)' : 'var(--text-main)'}; font-size:0.95rem;">
+          <a href="javascript:void(0)" class="aging-stock-link" onclick="openMaterialAgingModal(${m.id})" style="font-weight:700; color:${m.stock_status === 'Critical' ? 'var(--danger)' : 'var(--primary)'}; font-size:0.95rem; text-decoration:underline; cursor:pointer;" title="Click to view Batch Receiving Dates & Shelf-Life Aging Breakdown">
             ${m.current_stock.toLocaleString()}
-          </span> ${m.unit}
+          </a> ${m.unit}
+          <div style="font-size:0.68rem; color:var(--text-dim);"><i class="fas fa-history"></i> Click for Aging</div>
+        </td>
+        <td>
+          <span style="font-weight:600; color:var(--cyan); font-size:0.92rem;">${floorStock.toLocaleString()}</span> ${m.unit}
+        </td>
+        <td>
+          <strong style="color:var(--text-main); font-size:0.95rem;">${totalPlant.toLocaleString()}</strong> ${m.unit}
         </td>
         <td>
           <span style="font-weight:600;">${m.safety_stock.toLocaleString()}</span> ${m.unit}
@@ -1649,6 +1744,7 @@ function setAdminTab(tab) {
   else if (tab === 'materials') loadAdminMaterials();
   else if (tab === 'users') loadAdminUsers();
   else if (tab === 'erp') loadERPSettings();
+  else if (tab === 'cloud') loadTursoStatusUI();
 }
 
 async function loadAdminSKUs() {
@@ -1918,6 +2014,163 @@ async function saveERPSettings() {
     }
   } catch (e) {
     showToast('Failed to save ERP settings', 'danger');
+  }
+}
+
+// ----------------- TURSO CLOUD DATABASE UI HANDLERS -----------------
+async function loadTursoStatusUI() {
+  const badge = document.getElementById('turso-status-badge');
+  const urlInp = document.getElementById('turso-cfg-url');
+  const resBox = document.getElementById('turso-test-result');
+
+  try {
+    const res = await fetch('/api/cloud/turso/status');
+    const data = await res.json();
+    if (data.is_configured && data.is_connected) {
+      if (badge) {
+        badge.className = 'pill pill-safe';
+        badge.innerHTML = '<i class="fas fa-check-circle"></i> Turso Cloud Active';
+      }
+      if (urlInp && !urlInp.value) urlInp.value = data.database_url || '';
+    } else if (data.is_configured) {
+      if (badge) {
+        badge.className = 'pill pill-critical';
+        badge.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Turso Configured (Offline)';
+      }
+      if (urlInp && !urlInp.value) urlInp.value = data.database_url || '';
+    } else {
+      if (badge) {
+        badge.className = 'pill pill-low';
+        badge.innerHTML = '<i class="fas fa-circle"></i> Local SQLite Mode';
+      }
+    }
+  } catch (e) {}
+}
+
+async function testTursoConnectionUI() {
+  const url = document.getElementById('turso-cfg-url')?.value.trim();
+  const token = document.getElementById('turso-cfg-token')?.value.trim();
+  const resBox = document.getElementById('turso-test-result');
+  const btn = document.getElementById('btn-test-turso');
+
+  if (!url || !token) {
+    showToast('Please enter both Turso Database URL and Auth Token', 'warning');
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Connecting to Turso Cloud...'; }
+  if (resBox) { resBox.style.display = 'block'; resBox.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing live connection to Turso Cloud database...'; resBox.style.color = 'var(--text-muted)'; }
+
+  try {
+    const res = await fetch('/api/cloud/turso/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, token })
+    });
+    const data = await res.json();
+    if (data.success) {
+      if (resBox) {
+        resBox.innerHTML = `
+          <div class="alert alert-success" style="padding:0.75rem 1rem; border-radius:8px;">
+            <strong><i class="fas fa-check-circle"></i> Connection Successful!</strong><br>
+            <span>Remote SQLite Version: <strong>${data.sqlite_version}</strong></span> • 
+            <span>Existing Tables: <strong>${data.existing_tables}</strong></span><br>
+            <small style="color:var(--text-dim);">Server Time: ${data.server_time}</small>
+          </div>
+        `;
+      }
+      showToast('Connected to Turso Cloud successfully!', 'success');
+    } else {
+      if (resBox) {
+        resBox.innerHTML = `
+          <div class="alert alert-danger" style="padding:0.75rem 1rem; border-radius:8px;">
+            <strong><i class="fas fa-exclamation-circle"></i> Connection Failed!</strong><br>
+            <span>${data.error}</span>
+          </div>
+        `;
+      }
+      showToast('Turso connection failed', 'danger');
+    }
+  } catch (e) {
+    if (resBox) resBox.innerHTML = '<div class="alert alert-danger">Network error connecting to server.</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-plug"></i> Test Cloud Connection'; }
+  }
+}
+
+async function saveTursoConfigUI() {
+  const url = document.getElementById('turso-cfg-url')?.value.trim();
+  const token = document.getElementById('turso-cfg-token')?.value.trim();
+  const btn = document.getElementById('btn-save-turso');
+
+  if (!url || !token) {
+    showToast('Please enter both Turso Database URL and Auth Token', 'warning');
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...'; }
+
+  try {
+    const res = await fetch('/api/cloud/turso/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, token })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Turso Cloud Database activated! All users will now sync to cloud.', 'success');
+      loadTursoStatusUI();
+    } else {
+      showToast(data.error || 'Failed to activate Turso config', 'danger');
+    }
+  } catch (e) {
+    showToast('Failed to save cloud config', 'danger');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-save"></i> Save & Activate Cloud DB'; }
+  }
+}
+
+async function migrateLocalToTursoUI() {
+  const url = document.getElementById('turso-cfg-url')?.value.trim();
+  const token = document.getElementById('turso-cfg-token')?.value.trim();
+  const btn = document.getElementById('btn-migrate-turso');
+  const resBox = document.getElementById('turso-test-result');
+
+  if (!confirm('Are you sure you want to copy all local SKUs, Materials, BOM, Plans, and Users to Turso Cloud?')) {
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Migrating Data to Cloud...'; }
+  if (resBox) { resBox.style.display = 'block'; resBox.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Migrating local schema & data to Turso Cloud... Please wait.'; resBox.style.color = 'var(--text-muted)'; }
+
+  try {
+    const res = await fetch('/api/cloud/turso/migrate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, token })
+    });
+    const data = await res.json();
+    if (data.success) {
+      if (resBox) {
+        resBox.innerHTML = `
+          <div class="alert alert-success" style="padding:0.75rem 1rem; border-radius:8px;">
+            <strong><i class="fas fa-check-circle"></i> Migration Completed!</strong><br>
+            <span>Total Tables Migrated: <strong>${data.total_tables}</strong></span> • 
+            <span>Total Records Copied: <strong>${data.total_rows}</strong></span><br>
+            <div style="font-size:0.75rem; margin-top:4px; color:var(--text-dim);">Your shared Turso Cloud Database now has 100% of the factory data!</div>
+          </div>
+        `;
+      }
+      showToast(`⚡ Migrated ${data.total_tables} tables (${data.total_rows} rows) to Turso!`, 'success');
+      loadTursoStatusUI();
+    } else {
+      if (resBox) resBox.innerHTML = `<div class="alert alert-danger"><strong>Migration Failed:</strong> ${data.error}</div>`;
+      showToast('Migration to Turso failed', 'danger');
+    }
+  } catch (e) {
+    if (resBox) resBox.innerHTML = '<div class="alert alert-danger">Network error during migration.</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-upload"></i> Migrate Local DB to Cloud'; }
   }
 }
 
@@ -2924,5 +3177,366 @@ async function submitCreateMaterial() {
     }
   } catch (e) {
     showToast('Failed to create material', 'danger');
+  }
+}
+
+
+
+// ----------------- REQUIREMENT 5: PRODUCTION FLOOR STOCK MODAL -----------------
+async function openFloorStockModal() {
+  const container = document.getElementById('floor-stock-modal-body');
+  if (container) container.innerHTML = '<div style="text-align:center; padding:2rem;"><i class="fas fa-spinner fa-spin"></i> Loading production floor stock...</div>';
+  showModal('modal-floor-stock');
+
+  const cat = AppState.selectedCategory;
+  try {
+    const res = await fetch(`/api/production/floor-stock?category=${cat}`);
+    const items = await res.json();
+
+    if (!items || items.length === 0) {
+      container.innerHTML = '<div style="text-align:center; padding:2rem; color:var(--text-dim);">No materials found for this unit.</div>';
+      return;
+    }
+
+    const rowsHtml = items.map(m => `
+      <tr>
+        <td><strong>${m.item_code}</strong></td>
+        <td>
+          <div style="font-weight:600;">${m.name}</div>
+          <div style="font-size:0.72rem; color:var(--text-dim);">${m.supplier_name || 'Standard'}</div>
+        </td>
+        <td><span class="pill ${m.type === 'RM' ? 'pill-safe' : 'pill-fast'}">${m.type}</span></td>
+        <td style="text-align:right;">${m.godown_stock.toLocaleString()} ${m.unit}</td>
+        <td style="text-align:right;">
+          <input type="number" step="0.1" class="form-control form-control-sm floor-stock-input" style="width:110px; font-weight:700; text-align:right;" 
+                 id="floor-stock-val-${m.id}" value="${m.floor_stock || 0}">
+        </td>
+        <td style="text-align:right; font-weight:700; color:var(--primary);">${m.total_plant_stock.toLocaleString()} ${m.unit}</td>
+        <td>
+          <button class="btn btn-xs btn-primary" onclick="submitFloorStockAudit(${m.id})">
+            <i class="fas fa-save"></i> Save Count
+          </button>
+        </td>
+      </tr>
+    `).join('');
+
+    container.innerHTML = `
+      <div style="background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:8px; padding:0.75rem 1rem; margin-bottom:1rem; font-size:0.82rem; display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <i class="fas fa-info-circle" style="color:var(--cyan);"></i>
+          <strong>Floor Stock (WIP):</strong> Production ফ্লোরে অবস্থিত আনইউজড কাঁচামাল ও প্যাকেজিং ম্যাটেরিয়ালের শিফট অনুযায়ী ফিজিক্যাল কাউন্ট আপডেট করুন।
+        </div>
+        <span class="pill pill-safe">Unit ${cat}</span>
+      </div>
+      <div class="table-responsive" style="max-height:360px; overflow-y:auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Item Code</th>
+              <th>Material Name</th>
+              <th>Type</th>
+              <th style="text-align:right;">Store Godown</th>
+              <th style="text-align:right;">Floor Stock (WIP)</th>
+              <th style="text-align:right;">Total In-Plant</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = '<div style="color:var(--danger); padding:1.5rem; text-align:center;">Failed to load floor stock.</div>';
+  }
+}
+
+async function submitFloorStockAudit(matId) {
+  const input = document.getElementById(`floor-stock-val-${matId}`);
+  const val = parseFloat(input?.value) || 0;
+
+  try {
+    const res = await fetch('/api/production/floor-stock/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        material_id: matId,
+        actual_floor_stock: val,
+        shift: 'Day',
+        notes: 'Shift physical floor audit'
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Floor stock updated successfully!', 'success');
+      loadStoreStock();
+    } else {
+      showToast(data.error || 'Failed to update floor stock', 'danger');
+    }
+  } catch (e) {
+    showToast('Network error while saving floor stock', 'danger');
+  }
+}
+
+// ----------------- REQUIREMENT 7: MRR BLANK TEMPLATE & BULK UPLOAD -----------------
+function downloadMRRBlankTemplate() {
+  const cat = AppState.selectedCategory;
+  window.location.href = `/api/store/mrr/template?category=${cat}`;
+  showToast('Downloading MRR Stock Inward Blank Template with solid cell shading...', 'success');
+}
+
+function openBulkMRRModal() {
+  const f = document.getElementById('bulk-mrr-file');
+  if (f) f.value = '';
+  const status = document.getElementById('bulk-mrr-status');
+  if (status) status.style.display = 'none';
+  showModal('modal-bulk-mrr');
+}
+
+async function submitBulkMRR() {
+  const fInp = document.getElementById('bulk-mrr-file');
+  if (!fInp || !fInp.files || fInp.files.length === 0) {
+    showToast('Please choose an Excel file to upload.', 'warning');
+    return;
+  }
+  const file = fInp.files[0];
+  const btn = document.getElementById('btn-submit-bulk-mrr');
+  const statusEl = document.getElementById('bulk-mrr-status');
+
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing Inward...'; }
+  if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Processing Excel file and updating store stock...'; statusEl.style.color = 'var(--text-muted)'; }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await fetch('/api/store/mrr/bulk-upload', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      if (statusEl) {
+        statusEl.style.color = 'var(--success)';
+        statusEl.innerHTML = `<i class="fas fa-check-circle"></i> ${data.message}`;
+      }
+      showToast(`⚡ Processed ${data.processed_count} MRRs successfully!`, 'success');
+      loadMRREntries();
+      loadStoreStock();
+      loadDashboard();
+      setTimeout(() => { hideModal('modal-bulk-mrr'); }, 1500);
+    } else {
+      if (statusEl) {
+        statusEl.style.color = 'var(--danger)';
+        statusEl.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${data.error || 'Failed to process MRR file.'}`;
+      }
+      showToast('Bulk upload failed', 'danger');
+    }
+  } catch (e) {
+    if (statusEl) {
+      statusEl.style.color = 'var(--danger)';
+      statusEl.innerHTML = '<i class="fas fa-exclamation-circle"></i> Connection error while uploading.';
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Upload & Process Inward'; }
+  }
+}
+
+// ----------------- ENHANCED POLOXY ERP SYNC HANDLERS -----------------
+let syncActionType = 'both';
+
+function setSyncAction(action) {
+  syncActionType = action;
+  document.querySelectorAll('.sync-action-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById(`btn-sync-action-${action === 'actual_output' ? 'output' : (action === 'opening_stock' ? 'opening' : 'both')}`);
+  if (btn) btn.classList.add('active');
+}
+
+
+
+// ----------------- REQUIREMENT 10: UNIFIED SINGLE DATE & DATE RANGE CONTROLLER -----------------
+const UnifiedDateState = {
+  mode: 'month', // 'month', 'single', 'range'
+  month: '2026-07',
+  singleDate: '2026-07-24',
+  rangeFrom: '2026-07-01',
+  rangeTo: '2026-07-31',
+  displayLabel: '📅 July 2026'
+};
+
+function toggleUnifiedDateDropdown(btn) {
+  const container = btn.closest('.unified-date-dropdown-container');
+  const menu = container.querySelector('.unified-date-dropdown-menu');
+  const isShown = menu.classList.contains('show');
+  document.querySelectorAll('.unified-date-dropdown-menu').forEach(m => m.classList.remove('show'));
+  if (!isShown) menu.classList.add('show');
+}
+
+function setDropdownDateMode(mode, btn) {
+  UnifiedDateState.mode = mode;
+  const menu = btn.closest('.unified-date-dropdown-menu');
+  menu.querySelectorAll('.date-mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  const pMonth = menu.querySelector('.pane-month');
+  const pSingle = menu.querySelector('.pane-single');
+  const pRange = menu.querySelector('.pane-range');
+
+  if (pMonth) pMonth.style.display = mode === 'month' ? 'block' : 'none';
+  if (pSingle) pSingle.style.display = mode === 'single' ? 'block' : 'none';
+  if (pRange) pRange.style.display = mode === 'range' ? 'block' : 'none';
+}
+
+function setQuickDateInput(type, btn) {
+  const menu = btn.closest('.unified-date-dropdown-menu');
+  const inp = menu.querySelector('.unified-date-single-input');
+  const today = new Date().toISOString().split('T')[0];
+  if (type === 'today') {
+    inp.value = today;
+  } else if (type === 'yesterday') {
+    const y = new Date();
+    y.setDate(y.getDate() - 1);
+    inp.value = y.toISOString().split('T')[0];
+  }
+}
+
+function setQuickDateRange(type, btn) {
+  const menu = btn.closest('.unified-date-dropdown-menu');
+  const fromInp = menu.querySelector('.unified-date-from-input');
+  const toInp = menu.querySelector('.unified-date-to-input');
+  const now = new Date();
+  const toStr = now.toISOString().split('T')[0];
+  
+  if (type === 'week') {
+    const w = new Date();
+    w.setDate(w.getDate() - 7);
+    fromInp.value = w.toISOString().split('T')[0];
+    toInp.value = toStr;
+  } else if (type === 'mtd') {
+    fromInp.value = `${toStr.substring(0, 7)}-01`;
+    toInp.value = toStr;
+  } else if (type === 'full_month') {
+    fromInp.value = '2026-07-01';
+    toInp.value = '2026-07-31';
+  }
+}
+
+function confirmUnifiedDateFilter(btn) {
+  const menu = btn.closest('.unified-date-dropdown-menu');
+  const container = btn.closest('.unified-date-dropdown-container');
+  const labelEl = container.querySelector('.unified-date-label');
+  
+  if (UnifiedDateState.mode === 'month') {
+    const mVal = menu.querySelector('.unified-month-select').value;
+    UnifiedDateState.month = mVal;
+    AppState.selectedMonth = mVal;
+    UnifiedDateState.displayLabel = `📅 ${mVal}`;
+  } else if (UnifiedDateState.mode === 'single') {
+    const sVal = menu.querySelector('.unified-date-single-input').value;
+    UnifiedDateState.singleDate = sVal;
+    UnifiedDateState.displayLabel = `📅 Date: ${sVal}`;
+  } else if (UnifiedDateState.mode === 'range') {
+    const fVal = menu.querySelector('.unified-date-from-input').value;
+    const tVal = menu.querySelector('.unified-date-to-input').value;
+    UnifiedDateState.rangeFrom = fVal;
+    UnifiedDateState.rangeTo = tVal;
+    UnifiedDateState.displayLabel = `📅 ${fVal} to ${tVal}`;
+  }
+
+  // Update all labels on page
+  document.querySelectorAll('.unified-date-label').forEach(lbl => {
+    lbl.textContent = UnifiedDateState.displayLabel;
+  });
+
+  menu.classList.remove('show');
+  
+  if (AppState.currentView === 'production') loadProductionView();
+  else if (AppState.currentView === 'forecast') loadForecastView();
+  else if (AppState.currentView === 'reports') loadReportsView();
+  else if (AppState.currentView === 'dashboard') loadDashboard();
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.unified-date-dropdown-container')) {
+    document.querySelectorAll('.unified-date-dropdown-menu').forEach(m => m.classList.remove('show'));
+  }
+});
+
+// ----------------- SUPER ADMIN EXCLUSIVE: FORECAST BOM MODAL -----------------
+async function openForecastBOMModal(skuId, skuName) {
+  if (AppState.currentUser?.role !== 'Super Admin') {
+    showToast('Access Denied (নিরাপত্তা সীমাবদ্ধতা): Only Super Admin has permission to view or edit Bill of Materials (BOM) specifications.', 'danger');
+    return;
+  }
+
+  const titleEl = document.getElementById('forecast-bom-modal-title');
+  const bodyEl = document.getElementById('forecast-bom-modal-body');
+  if (titleEl) titleEl.textContent = `BOM Specification: ${skuName}`;
+  if (bodyEl) bodyEl.innerHTML = '<div style="text-align:center; padding:2rem;"><i class="fas fa-spinner fa-spin"></i> Loading Bill of Materials from secure database...</div>';
+  showModal('modal-view-bom');
+
+  try {
+    const res = await fetch(`/api/bom/${skuId}`);
+    if (res.status === 403 || res.status === 401) {
+      bodyEl.innerHTML = '<div class="alert alert-danger" style="margin:1rem;"><i class="fas fa-lock"></i> <strong>Access Denied:</strong> Only Super Admin can view Bill of Materials (BOM) specifications.</div>';
+      return;
+    }
+    const data = await res.json();
+    const items = data.items || [];
+    if (items.length === 0) {
+      bodyEl.innerHTML = '<div style="text-align:center; padding:2rem; color:var(--text-dim);">No BOM formulation items defined for this SKU.</div>';
+      return;
+    }
+
+    const rmItems = items.filter(i => i.material_type === 'RM');
+    const pmItems = items.filter(i => i.material_type === 'PM');
+
+    const renderTable = (list, typeName) => {
+      if (list.length === 0) return `<div style="font-size:0.8rem; color:var(--text-dim); padding:0.5rem;">No ${typeName} materials defined.</div>`;
+      return `
+        <table class="data-table" style="margin-bottom:1rem;">
+          <thead>
+            <tr>
+              <th>Item Code</th>
+              <th>Material Name</th>
+              <th style="text-align:right;">Standard Rate (per Ctn)</th>
+              <th style="text-align:right;">Current Godown Stock</th>
+              <th style="text-align:right;">Unit Price</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list.map(it => `
+              <tr>
+                <td><strong>${it.item_code}</strong></td>
+                <td>${it.material_name}</td>
+                <td style="text-align:right; font-weight:700; color:var(--primary);">${it.rate_per_ctn} ${it.bom_unit || it.material_unit}</td>
+                <td style="text-align:right;">${(it.current_stock || 0).toLocaleString()} ${it.material_unit}</td>
+                <td style="text-align:right;">৳ ${(it.unit_price || 0).toFixed(2)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    };
+
+    bodyEl.innerHTML = `
+      <div style="background:rgba(30,58,138,0.08); border:1px solid rgba(30,58,138,0.25); border-radius:8px; padding:0.75rem 1rem; margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <span class="pill pill-safe"><i class="fas fa-shield-alt"></i> Super Admin Exclusive View</span>
+          <strong style="margin-left:0.5rem; color:var(--text-main); font-size:0.9rem;">${skuName}</strong>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="hideModal('modal-view-bom'); switchView('master_bom', { adminTab: 'bom' });">
+          <i class="fas fa-edit"></i> Edit in Master BOM
+        </button>
+      </div>
+      <h4 style="margin:0.5rem 0; font-size:0.9rem; color:var(--text-main);"><i class="fas fa-seedling" style="color:var(--success);"></i> Raw Materials (RM):</h4>
+      ${renderTable(rmItems, 'Raw Materials')}
+      <h4 style="margin:1rem 0 0.5rem 0; font-size:0.9rem; color:var(--text-main);"><i class="fas fa-box" style="color:var(--warning);"></i> Packaging Materials (PM):</h4>
+      ${renderTable(pmItems, 'Packaging Materials')}
+    `;
+  } catch (e) {
+    bodyEl.innerHTML = '<div style="color:var(--danger); padding:1.5rem; text-align:center;">Failed to fetch BOM details.</div>';
   }
 }
