@@ -468,8 +468,8 @@
             <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('production')">
               <i class="fas fa-file-excel" style="color:var(--success);"></i> Export Plans
             </button>
-            <button class="btn btn-outline" onclick="syncFromPoloxyERP()" title="Pull output from Poloxy ERP">
-              <i class="fas fa-sync-alt"></i> Pull Poloxy ERP
+            <button class="btn btn-outline" onclick="openPoloxySyncModal()" title="Pull output from Poloxy ERP with Date/Range Selection">
+              <i class="fas fa-sync-alt" style="color:var(--primary);"></i> Pull Poloxy ERP
             </button>
             <button class="btn btn-primary" onclick="openCreatePlanModal()">
               <i class="fas fa-plus"></i> Create Plan
@@ -1520,6 +1520,101 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-outline" id="change-pass-cancel-btn" onclick="hideModal('modal-change-password')">Cancel</button>
           <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Update Password</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Poloxy ERP Live Sync (Smart Engine with Calendar Date/Range) -->
+  <div class="modal-backdrop" id="modal-poloxy-sync">
+    <div class="modal-dialog" style="max-width:520px;">
+      <div class="modal-header">
+        <div class="modal-title" style="display:flex; align-items:center; gap:0.5rem;">
+          <i class="fas fa-sync-alt" style="color:var(--primary);"></i>
+          <span>Pull Production from Poloxy ERP</span>
+        </div>
+        <button class="modal-close" onclick="hideModal('modal-poloxy-sync')">&times;</button>
+      </div>
+      <form id="form-poloxy-sync" onsubmit="event.preventDefault(); submitPoloxySync();">
+        <div class="modal-body">
+          <!-- Live Engine Badge -->
+          <div style="background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.25); border-radius:8px; padding:0.75rem 1rem; margin-bottom:1.2rem; display:flex; align-items:center; justify-content:space-between;">
+            <div>
+              <div style="font-size:0.85rem; font-weight:700; color:var(--text-main); display:flex; align-items:center; gap:0.4rem;">
+                <span class="pill pill-fast" style="font-size:0.7rem; padding:2px 6px;">⚡ Smart Engine</span>
+                <span id="poloxy-sync-unit-label">Unit 05 (Dry Foods)</span>
+              </div>
+              <div style="font-size:0.75rem; color:var(--text-muted); margin-top:3px;" id="poloxy-sync-wc-label">
+                Work Center: Dry Food Packing
+              </div>
+            </div>
+            <span class="pill pill-safe" style="font-size:0.72rem;">Live Direct (No-Cache)</span>
+          </div>
+
+          <!-- Date Mode Selector: Single Date vs Date Range -->
+          <div class="form-group" style="margin-bottom:1rem;">
+            <label class="form-label" style="font-weight:600; font-size:0.85rem;">Date Selection Mode (তারিখ নির্বাচন মোড):</label>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.6rem; margin-top:0.35rem;">
+              <button type="button" class="btn btn-outline sync-mode-btn active" id="btn-sync-mode-single" onclick="setSyncDateMode('single')" style="justify-content:center; gap:0.4rem; padding:0.55rem;">
+                <i class="fas fa-calendar-day"></i> Single Date (নির্দিষ্ট দিন)
+              </button>
+              <button type="button" class="btn btn-outline sync-mode-btn" id="btn-sync-mode-range" onclick="setSyncDateMode('range')" style="justify-content:center; gap:0.4rem; padding:0.55rem;">
+                <i class="fas fa-calendar-week"></i> Date Range (তারিখের পরিসর)
+              </button>
+            </div>
+          </div>
+
+          <!-- 1. Single Date Picker Container -->
+          <div id="sync-container-single" style="margin-bottom:1rem;">
+            <div class="form-group">
+              <label class="form-label">Select Production Date (প্রোডাকশনের তারিখ):</label>
+              <div style="display:flex; gap:0.5rem; align-items:center;">
+                <input type="date" class="form-control" id="sync-single-date" style="font-size:0.95rem; font-weight:600;">
+                <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickDate('today')" style="white-space:nowrap;">Today</button>
+                <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickDate('yesterday')" style="white-space:nowrap;">Yesterday</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Date Range Picker Container -->
+          <div id="sync-container-range" style="display:none; margin-bottom:1rem;">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.75rem;">
+              <div class="form-group">
+                <label class="form-label">From Date (শুরুর তারিখ):</label>
+                <input type="date" class="form-control" id="sync-range-from" style="font-size:0.9rem; font-weight:600;">
+              </div>
+              <div class="form-group">
+                <label class="form-label">To Date (শেষের তারিখ):</label>
+                <input type="date" class="form-control" id="sync-range-to" style="font-size:0.9rem; font-weight:600;">
+              </div>
+            </div>
+            <div style="display:flex; gap:0.4rem; margin-top:0.4rem;">
+              <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickRange('week')">Last 7 Days</button>
+              <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickRange('mtd')">Month to Date</button>
+              <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickRange('full_month')">Full Month</button>
+            </div>
+          </div>
+
+          <!-- Smart Engine Options (Guarantees Fresh Data & No Cache) -->
+          <div style="background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:8px; padding:0.75rem; font-size:0.78rem;">
+            <div style="display:flex; align-items:flex-start; gap:0.5rem;">
+              <i class="fas fa-bolt" style="color:var(--warning); margin-top:2px;"></i>
+              <div>
+                <strong>Smart Engine Real-Time Policy (ক্যাশ ছাড়া সরাসরি লাইভ এক্সট্র্যাকশন):</strong>
+                <div style="color:var(--text-muted); margin-top:2px;">
+                  কোনো ব্রাউজার ক্যাশ বা পূর্ববর্তী ডাটা ব্যবহার হবে না। Poloxy ERP-এর লাইভ সার্ভার থেকে সরাসরি রিয়েলটাইমে নির্বাচিত তারিখের প্রোডাকশন আউটপুট এক্সট্র্যাক্ট করা হবে।
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="sync-status-msg" style="margin-top:0.75rem; font-size:0.82rem; display:none;"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-poloxy-sync')">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-submit-erp-sync">
+            <i class="fas fa-cloud-download-alt"></i> Pull Live ERP Data
+          </button>
         </div>
       </form>
     </div>

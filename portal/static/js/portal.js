@@ -343,7 +343,7 @@ function applyRolePermissions() {
   const canEditProduction = canUserEdit('production');
   const createPlanBtn = document.querySelector('[onclick="openCreatePlanModal()"]');
   const bulkProdBtn = document.querySelector('[onclick="openBulkProductionModal()"]');
-  const poloxyBtn = document.querySelector('[onclick="syncFromPoloxyERP()"]');
+  const poloxyBtn = document.querySelector('[onclick="openPoloxySyncModal()"]') || document.querySelector('[onclick="syncFromPoloxyERP()"]');
   if (createPlanBtn) createPlanBtn.style.display = canEditProduction ? '' : 'none';
   if (bulkProdBtn) bulkProdBtn.style.display = canEditProduction ? '' : 'none';
   if (poloxyBtn) poloxyBtn.style.display = canEditProduction ? '' : 'none';
@@ -1092,27 +1092,207 @@ function renderProductionPlans(plans) {
   }).join('');
 }
 
-// Poloxy ERP Live Sync
-async function syncFromPoloxyERP() {
-  if (!confirm(`Pull finished goods production output from Poloxy ERP for Unit ${AppState.selectedCategory}?`)) {
-    return;
+// Poloxy ERP Smart Live Sync (Calendar Single Date & Range with Cache Bypass)
+let syncDateMode = 'single';
+
+function openPoloxySyncModal() {
+  const cat = AppState.selectedCategory;
+  const unitLabel = document.getElementById('poloxy-sync-unit-label');
+  const wcLabel = document.getElementById('poloxy-sync-wc-label');
+  
+  const unitNames = {
+    '05': 'Unit 05 (Dry Foods)',
+    '02': 'Unit 02 (Frozen Foods)',
+    '01': 'Unit 01 (Process Chicken)',
+    'ALL': 'All Production Units'
+  };
+  const workCenters = {
+    '05': 'Dry Food Packing (Bakery Puffed Sauce Chanachur & Lachsa)',
+    '02': 'Frozen Finished Goods Plant',
+    '01': 'Process Chicken Plant',
+    'ALL': 'Multi-Work Center'
+  };
+
+  if (unitLabel) unitLabel.textContent = unitNames[cat] || `Unit ${cat}`;
+  if (wcLabel) wcLabel.textContent = `Work Center: ${workCenters[cat] || 'Paragon Plant'}`;
+
+  // Default date setup
+  const today = new Date().toISOString().split('T')[0];
+  const sDate = document.getElementById('sync-single-date');
+  const rFrom = document.getElementById('sync-range-from');
+  const rTo = document.getElementById('sync-range-to');
+
+  if (sDate) sDate.value = today;
+  if (rFrom) rFrom.value = `${AppState.selectedMonth}-01`;
+  if (rTo) rTo.value = today;
+
+  setSyncDateMode('single');
+
+  const statusMsg = document.getElementById('sync-status-msg');
+  if (statusMsg) {
+    statusMsg.style.display = 'none';
+    statusMsg.innerHTML = '';
   }
-  showToast('Connecting to Poloxy ERP (erp.paragon.com.bd)...', 'primary');
+
+  const btn = document.getElementById('btn-submit-erp-sync');
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> Pull Live ERP Data';
+  }
+
+  showModal('modal-poloxy-sync');
+}
+
+function setSyncDateMode(mode) {
+  syncDateMode = mode;
+  const btnSingle = document.getElementById('btn-sync-mode-single');
+  const btnRange = document.getElementById('btn-sync-mode-range');
+  const boxSingle = document.getElementById('sync-container-single');
+  const boxRange = document.getElementById('sync-container-range');
+
+  if (btnSingle && btnRange) {
+    btnSingle.classList.toggle('active', mode === 'single');
+    btnRange.classList.toggle('active', mode === 'range');
+  }
+
+  if (boxSingle) boxSingle.style.display = (mode === 'single') ? 'block' : 'none';
+  if (boxRange) boxRange.style.display = (mode === 'range') ? 'block' : 'none';
+}
+
+function setSyncQuickDate(type) {
+  const sDate = document.getElementById('sync-single-date');
+  if (!sDate) return;
+  const d = new Date();
+  if (type === 'today') {
+    sDate.value = d.toISOString().split('T')[0];
+  } else if (type === 'yesterday') {
+    d.setDate(d.getDate() - 1);
+    sDate.value = d.toISOString().split('T')[0];
+  }
+}
+
+function setSyncQuickRange(type) {
+  const rFrom = document.getElementById('sync-range-from');
+  const rTo = document.getElementById('sync-range-to');
+  if (!rFrom || !rTo) return;
+  
+  const today = new Date();
+  rTo.value = today.toISOString().split('T')[0];
+
+  if (type === 'week') {
+    const past = new Date();
+    past.setDate(past.getDate() - 7);
+    rFrom.value = past.toISOString().split('T')[0];
+  } else if (type === 'mtd') {
+    rFrom.value = `${AppState.selectedMonth}-01`;
+  } else if (type === 'full_month') {
+    rFrom.value = `${AppState.selectedMonth}-01`;
+    // Last day of selected month
+    const parts = AppState.selectedMonth.split('-');
+    const lastDay = new Date(parseInt(parts[0]), parseInt(parts[1]), 0).getDate();
+    rTo.value = `${AppState.selectedMonth}-${lastDay}`;
+  }
+}
+
+async function submitPoloxySync() {
+  const btn = document.getElementById('btn-submit-erp-sync');
+  const statusMsg = document.getElementById('sync-status-msg');
+
+  let payload = {
+    category_code: AppState.selectedCategory,
+    month: AppState.selectedMonth,
+    mode: syncDateMode,
+    _nocache: Date.now() // Strict cache-busting token
+  };
+
+  if (syncDateMode === 'single') {
+    const sDate = document.getElementById('sync-single-date').value;
+    if (!sDate) {
+      showToast('Please select a production date.', 'warning');
+      return;
+    }
+    payload.date = sDate;
+  } else {
+    const from = document.getElementById('sync-range-from').value;
+    const to = document.getElementById('sync-range-to').value;
+    if (!from || !to) {
+      showToast('Please select both From and To dates for the range.', 'warning');
+      return;
+    }
+    if (from > to) {
+      showToast('From date cannot be after To date.', 'warning');
+      return;
+    }
+    payload.date_from = from;
+    payload.date_to = to;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Connecting to Poloxy ERP...';
+  }
+
+  if (statusMsg) {
+    statusMsg.style.display = 'block';
+    statusMsg.style.color = 'var(--text-muted)';
+    statusMsg.innerHTML = '<i class="fas fa-sync-alt fa-spin" style="margin-right:5px; color:var(--primary);"></i> Smart Engine contacting Poloxy ERP live server... Bypassing local cache.';
+  }
+
   try {
     const res = await fetch('/api/erp/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ category_code: AppState.selectedCategory, month: AppState.selectedMonth })
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      },
+      body: JSON.stringify(payload)
     });
     const data = await res.json();
+    
     if (data.success) {
-      showToast(data.message, 'success');
+      if (statusMsg) {
+        statusMsg.style.color = 'var(--success)';
+        statusMsg.innerHTML = `
+          <div style="background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:6px; padding:0.5rem 0.75rem; margin-top:0.35rem;">
+            <strong><i class="fas fa-check-circle"></i> Live ERP Pull Complete!</strong><br>
+            <span>Date: <strong>${data.date_range}</strong></span> • 
+            <span>Plans Updated: <strong>${data.plans_updated}</strong></span> • 
+            <span>Output: <strong>${(data.total_produced_cartons || 0).toLocaleString()} Ctns</strong></span><br>
+            <small style="color:var(--text-dim); font-size:0.72rem;">Live Timestamp: ${data.live_timestamp} (Zero cache used)</small>
+          </div>
+        `;
+      }
+      showToast(`⚡ Pulled live ERP data for ${data.date_range} (${data.plans_updated} plans updated)`, 'success');
       loadProductionView();
       loadDashboard();
+      setTimeout(() => {
+        hideModal('modal-poloxy-sync');
+      }, 1600);
+    } else {
+      if (statusMsg) {
+        statusMsg.style.color = 'var(--danger)';
+        statusMsg.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${data.error || 'Failed to pull data from ERP'}`;
+      }
+      showToast('ERP Sync failed', 'danger');
     }
   } catch (e) {
-    showToast('Failed to sync from Poloxy ERP', 'danger');
+    if (statusMsg) {
+      statusMsg.style.color = 'var(--danger)';
+      statusMsg.innerHTML = '<i class="fas fa-exclamation-circle"></i> Connection error while reaching ERP server.';
+    }
+    showToast('Network error during ERP sync', 'danger');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> Pull Live ERP Data';
+    }
   }
+}
+
+// Legacy alias for backwards compatibility
+function syncFromPoloxyERP() {
+  openPoloxySyncModal();
 }
 
 // ----------------- 4. STORE & STOCK (TWO SEPARATE TABS) -----------------
