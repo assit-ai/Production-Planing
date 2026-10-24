@@ -74,7 +74,7 @@ def check_role_permission(allowed_roles, action_desc="perform this action"):
     user_role = CURRENT_SESSION.get("role")
     if not user_role:
         return False, jsonify({"error": "Unauthorized: Please log in."}), 401
-    if user_role == "Super Admin":
+    if user_role in ("Super Admin", "Admin"):
         return True, None, None
     if user_role in allowed_roles:
         return True, None, None
@@ -164,7 +164,7 @@ def switch_role():
 
 @app.route("/api/users", methods=["GET"])
 def get_all_users():
-    if CURRENT_SESSION.get("role") != "Super Admin":
+    if CURRENT_SESSION.get("role") not in ("Super Admin", "Admin"):
         return jsonify({"error": "Access Denied: Only Super Admin can view or manage users."}), 403
     conn = get_db()
     users = conn.execute("SELECT id, username, name, role, department, allowed_category, password, is_active, created_at, must_change_password FROM users ORDER BY id ASC").fetchall()
@@ -173,7 +173,7 @@ def get_all_users():
 
 @app.route("/api/users", methods=["POST"])
 def create_user():
-    if CURRENT_SESSION.get("role") != "Super Admin":
+    if CURRENT_SESSION.get("role") not in ("Super Admin", "Admin"):
         return jsonify({"error": "Access Denied: Only Super Admin can create users."}), 403
     data = request.json or {}
     username = data.get("username", "").strip()
@@ -201,7 +201,7 @@ def create_user():
 
 @app.route("/api/users/<int:user_id>", methods=["PUT"])
 def update_user(user_id):
-    if CURRENT_SESSION.get("role") != "Super Admin":
+    if CURRENT_SESSION.get("role") not in ("Super Admin", "Admin"):
         return jsonify({"error": "Access Denied: Only Super Admin can update users."}), 403
     data = request.json or {}
     conn = get_db()
@@ -225,7 +225,7 @@ def update_user(user_id):
 
 @app.route("/api/users/<int:user_id>", methods=["DELETE"])
 def delete_user(user_id):
-    if CURRENT_SESSION.get("role") != "Super Admin":
+    if CURRENT_SESSION.get("role") not in ("Super Admin", "Admin"):
         return jsonify({"error": "Access Denied: Only Super Admin can delete users."}), 403
     if user_id == 1:
         return jsonify({"error": "Cannot delete primary Super Admin"}), 400

@@ -301,11 +301,16 @@ function updateUserUI() {
   applyRolePermissions();
 }
 
+function isSuperAdminUser() {
+  const role = AppState.currentUser?.role;
+  return role === 'Super Admin' || role === 'Admin';
+}
+
 function canUserEdit(section) {
   if (!AppState.currentUser) return false;
-  const role = AppState.currentUser.role;
-  if (role === 'Super Admin') return true;
+  if (isSuperAdminUser()) return true;
 
+  const role = AppState.currentUser.role;
   if (section === 'forecast') {
     return role === 'Sales';
   } else if (section === 'production') {
@@ -322,12 +327,12 @@ function canUserEdit(section) {
 
 function applyRolePermissions() {
   if (!AppState.currentUser) return;
-  const role = AppState.currentUser.role;
+  const isSuper = isSuperAdminUser();
   
-  // Super Admin only elements (e.g. Master & BOM, User Management, Add Category, Poloxy ERP settings)
+  // Super Admin only elements (e.g. Master & BOM, User Management, Add Category, Poloxy ERP settings, Turso Cloud DB)
   const adminEls = document.querySelectorAll('.admin-only');
   adminEls.forEach(el => {
-    el.style.display = (role === 'Super Admin') ? '' : 'none';
+    el.style.display = isSuper ? '' : 'none';
   });
 
   // 1. Sales Forecast Section Edit Buttons
@@ -468,7 +473,7 @@ function initNavigation() {
 
 function switchView(viewName, subOptions = {}) {
   // Access control: Only Super Admin can view 'users' or 'master_bom'
-  if ((viewName === 'users' || viewName === 'master_bom') && AppState.currentUser?.role !== 'Super Admin') {
+  if ((viewName === 'users' || viewName === 'master_bom') && !isSuperAdminUser()) {
     showToast('Access Denied: Only Super Admin has permission to view this section.', 'warning');
     viewName = 'dashboard';
   }
@@ -1729,6 +1734,7 @@ async function loadMasterBOMView() {
   loadAdminMaterials();
   loadAdminUsers();
   loadERPSettings();
+  loadTursoStatusUI();
 }
 
 function setAdminTab(tab) {
@@ -3466,7 +3472,7 @@ document.addEventListener('click', (e) => {
 
 // ----------------- SUPER ADMIN EXCLUSIVE: FORECAST BOM MODAL -----------------
 async function openForecastBOMModal(skuId, skuName) {
-  if (AppState.currentUser?.role !== 'Super Admin') {
+  if (!isSuperAdminUser()) {
     showToast('Access Denied (নিরাপত্তা সীমাবদ্ধতা): Only Super Admin has permission to view or edit Bill of Materials (BOM) specifications.', 'danger');
     return;
   }

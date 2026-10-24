@@ -164,6 +164,42 @@ class TursoConnection:
         except Exception as e:
             raise e
 
+    def execute_batch(self, stmts: List[tuple]) -> list:
+        """
+        Executes a batch of (sql, params) statements in a single Turso pipeline HTTP request.
+        Drastically improves migration and bulk operation speed across WAN.
+        """
+        if not stmts:
+            return []
+
+        requests_payload = [
+            {"type": "execute", "stmt": {"sql": "PRAGMA foreign_keys = OFF;"}}
+        ]
+        for sql, params in stmts:
+            stmt_args = [self._serialize_arg(p) for p in (params or ())]
+            requests_payload.append({
+                "type": "execute",
+                "stmt": {
+                    "sql": sql,
+                    "args": stmt_args
+                }
+            })
+        requests_payload.append({"type": "close"})
+
+        try:
+            resp = requests.post(self.endpoint, headers=self.headers, json={"requests": requests_payload}, timeout=60)
+            if resp.status_code != 200:
+                raise Exception(f"Turso HTTP {resp.status_code}: {resp.text}")
+
+            data = resp.json()
+            results = data.get("results", [])
+            for r in results:
+                if r.get("type") == "error":
+                    raise Exception(r.get("error", {}).get("message", "Batch statement error"))
+            return results
+        except Exception as e:
+            raise e
+
     def execute(self, sql: str, params: Optional[tuple] = None) -> TursoCursor:
         cur = TursoCursor(self)
         cur.execute(sql, params)
@@ -209,7 +245,7 @@ def test_turso_connection(url: str, token: str) -> dict:
 
 
 def migrate_local_sqlite_to_turso(sqlite_path: str, turso_url: str, turso_token: str) -> dict:
-    """Migrates schema and all data from local SQLite planning_system.db to Turso Cloud."""
+    """Migrates schema and all data from local SQLite planning_system.db to Turso Cloud using high-efficiency batching."""
     if not os.path.exists(sqlite_path):
         return {"success": False, "error": f"Local database not found at {sqlite_path}"}
 
@@ -218,7 +254,6 @@ def migrate_local_sqlite_to_turso(sqlite_path: str, turso_url: str, turso_token:
     turso = TursoConnection(turso_url, turso_token)
 
     try:
-        # 1. Fetch all table schemas
         cursor = local_conn.cursor()
         tables = cursor.execute("""
             SELECT name, sql FROM sqlite_master 
@@ -226,29 +261,33 @@ def migrate_local_sqlite_to_turso(sqlite_path: str, turso_url: str, turso_token:
             ORDER BY rootpage ASC
         """).fetchall()
 
+        # Step 1: Clean drop of existing tables in reverse order
+        drop_stmts = [(f'DROP TABLE IF EXISTS "{t["name"]}"', ()) for t in reversed(tables)]
+        turso.execute_batch(drop_stmts)
+
+        # Step 2: Create all tables
+        create_stmts = [(t["sql"], ()) for t in tables if t["sql"]]
+        turso.execute_batch(create_stmts)
+
+        # Step 3: Copy data rows in batches of 75 rows per pipeline call
         migrated_tables = []
         total_rows_migrated = 0
+        BATCH_SIZE = 75
 
         for t in tables:
             t_name = t["name"]
-            create_sql = t["sql"]
-            if not create_sql:
-                continue
-
-            # Create table in Turso
-            turso.execute(create_sql)
-
-            # Copy data rows
-            rows = cursor.execute(f"SELECT * FROM {t_name}").fetchall()
+            rows = cursor.execute(f'SELECT * FROM "{t_name}"').fetchall()
             if rows:
                 cols = [d[0] for d in cursor.description]
                 placeholders = ", ".join(["?"] * len(cols))
                 col_names = ", ".join([f'"{c}"' for c in cols])
-                insert_sql = f'INSERT OR REPLACE INTO "{t_name}" ({col_names}) VALUES ({placeholders})'
+                insert_sql = f'INSERT INTO "{t_name}" ({col_names}) VALUES ({placeholders})'
 
-                for row in rows:
-                    turso.execute(insert_sql, tuple(row))
-                    total_rows_migrated += 1
+                for i in range(0, len(rows), BATCH_SIZE):
+                    batch = rows[i:i + BATCH_SIZE]
+                    stmts = [(insert_sql, tuple(r)) for r in batch]
+                    turso.execute_batch(stmts)
+                    total_rows_migrated += len(batch)
 
             migrated_tables.append({"table": t_name, "rows": len(rows)})
 
@@ -266,3 +305,4 @@ def migrate_local_sqlite_to_turso(sqlite_path: str, turso_url: str, turso_token:
             "success": False,
             "error": f"Migration failed: {str(e)}"
         }
+
