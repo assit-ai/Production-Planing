@@ -1,6 +1,31 @@
 // Production & Store Planning Enterprise Web Portal & Mobile App
 // Real-time Controllers, Multi-Category, ERP Sync, UOM Toggle & RBAC
 
+// Global fetch wrapper to ensure authentication tokens are always attached on Serverless/Vercel
+(function() {
+  const originalFetch = window.fetch;
+  window.fetch = function(url, options = {}) {
+    options = options || {};
+    const token = sessionStorage.getItem('paragon_session_token') || localStorage.getItem('paragon_session_token');
+    if (token) {
+      if (!options.headers) {
+        options.headers = {};
+      }
+      if (options.headers instanceof Headers) {
+        if (!options.headers.has('Authorization')) options.headers.set('Authorization', 'Bearer ' + token);
+        if (!options.headers.has('X-Session-Token')) options.headers.set('X-Session-Token', token);
+      } else if (Array.isArray(options.headers)) {
+        options.headers.push(['Authorization', 'Bearer ' + token]);
+        options.headers.push(['X-Session-Token', token]);
+      } else {
+        options.headers['Authorization'] = options.headers['Authorization'] || ('Bearer ' + token);
+        options.headers['X-Session-Token'] = options.headers['X-Session-Token'] || token;
+      }
+    }
+    return originalFetch(url, options);
+  };
+})();
+
 const AppState = {
   currentUser: {
     id: 1,
@@ -21,7 +46,8 @@ const AppState = {
   materials: [],
   charts: {},
   storeFilter: 'all',
-  theme: localStorage.getItem('portal_theme') || 'light'
+  theme: localStorage.getItem('portal_theme') || 'light',
+  reportFilterMode: 'month'
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -59,11 +85,22 @@ function toggleTheme() {
 
 // ----------------- AUTH & USER CONTROLLER -----------------
 async function initCurrentUser() {
-  const sessionUserStr = localStorage.getItem('paragon_session_user');
+  // Clear persistent local storage so closing tab / opening bookmark always prompts for login
+  localStorage.removeItem('paragon_session_user');
+  localStorage.removeItem('paragon_session_token');
+
+  const sessionUserStr = sessionStorage.getItem('paragon_session_user');
+  const token = sessionStorage.getItem('paragon_session_token');
   const loginOverlay = document.getElementById('login-screen-overlay');
   
-  if (!sessionUserStr) {
-    if (loginOverlay) loginOverlay.classList.remove('hidden');
+  if (!sessionUserStr || !token) {
+    if (loginOverlay) {
+      loginOverlay.classList.remove('hidden');
+      setTimeout(() => {
+        const uInp = document.getElementById('login-username');
+        if (uInp) uInp.focus();
+      }, 100);
+    }
     return false;
   }
   
@@ -80,7 +117,8 @@ async function initCurrentUser() {
     }
     return true;
   } catch (e) {
-    localStorage.removeItem('paragon_session_user');
+    sessionStorage.removeItem('paragon_session_user');
+    sessionStorage.removeItem('paragon_session_token');
     if (loginOverlay) loginOverlay.classList.remove('hidden');
     return false;
   }
@@ -146,7 +184,7 @@ async function submitChangePassword() {
     if (data.success) {
       if (AppState.currentUser) {
         AppState.currentUser.must_change_password = false;
-        localStorage.setItem('paragon_session_user', JSON.stringify(AppState.currentUser));
+        sessionStorage.setItem('paragon_session_user', JSON.stringify(AppState.currentUser));
       }
       hideModal('modal-change-password');
       showToast('Password changed successfully! (পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে)', 'success');
@@ -180,7 +218,10 @@ async function handleLoginSubmit() {
     });
     const data = await res.json();
     if (data.success && data.user) {
-      localStorage.setItem('paragon_session_user', JSON.stringify(data.user));
+      if (data.token) {
+        sessionStorage.setItem('paragon_session_token', data.token);
+      }
+      sessionStorage.setItem('paragon_session_user', JSON.stringify(data.user));
       AppState.currentUser = data.user;
       
       const loginOverlay = document.getElementById('login-screen-overlay');
@@ -231,12 +272,19 @@ function quickFillLogin(username, password) {
 }
 
 async function logout() {
+  sessionStorage.removeItem('paragon_session_user');
+  sessionStorage.removeItem('paragon_session_token');
   localStorage.removeItem('paragon_session_user');
+  localStorage.removeItem('paragon_session_token');
   try {
     await fetch('/api/auth/logout', { method: 'POST' });
   } catch (e) {}
   AppState.currentUser = null;
   AppState.currentView = 'dashboard';
+  document.body.classList.remove('is-super-admin');
+  document.querySelectorAll('.admin-only, .danger-zone-card').forEach(el => {
+    el.style.setProperty('display', 'none', 'important');
+  });
   
   // Reset all views so next user always starts on dashboard
   document.querySelectorAll('.view-section').forEach(sec => sec.classList.remove('active'));
@@ -326,13 +374,32 @@ function canUserEdit(section) {
 }
 
 function applyRolePermissions() {
-  if (!AppState.currentUser) return;
+  if (!AppState.currentUser) {
+    document.body.classList.remove('is-super-admin');
+    document.querySelectorAll('.admin-only, .danger-zone-card').forEach(el => {
+      el.style.setProperty('display', 'none', 'important');
+    });
+    return;
+  }
   const isSuper = isSuperAdminUser();
+  if (isSuper) {
+    document.body.classList.add('is-super-admin');
+  } else {
+    document.body.classList.remove('is-super-admin');
+  }
   
-  // Super Admin only elements (e.g. Master & BOM, User Management, Add Category, Poloxy ERP settings, Turso Cloud DB)
-  const adminEls = document.querySelectorAll('.admin-only');
+  // Super Admin only elements (e.g. Master & BOM, User Management, Add Category, Poloxy ERP settings, Turso Cloud DB, Data Cleanup Danger Zone)
+  const adminEls = document.querySelectorAll('.admin-only, .danger-zone-card');
   adminEls.forEach(el => {
-    el.style.display = isSuper ? '' : 'none';
+    if (isSuper) {
+      if (el.classList.contains('nav-item')) {
+        el.style.setProperty('display', 'flex', 'important');
+      } else {
+        el.style.setProperty('display', 'block', 'important');
+      }
+    } else {
+      el.style.setProperty('display', 'none', 'important');
+    }
   });
 
   // 1. Sales Forecast Section Edit Buttons
@@ -838,8 +905,17 @@ function renderForecastTable(items) {
     totalCtn += (it.forecast_ctn || 0);
     totalPcs += (it.forecast_pcs || 0);
 
-    const isCarton = AppState.displayUOM === 'Carton';
-    const displayVal = isCarton ? (it.forecast_ctn || 0) : (it.forecast_pcs || 0);
+    const origCtn = it.original_forecast_ctn != null ? it.original_forecast_ctn : (it.forecast_ctn || 0);
+    const revNo = it.revision_no || 0;
+    const varianceFromOrig = (it.forecast_ctn || 0) - origCtn;
+    
+    // Default weekly split if not set
+    const totalCurrent = it.forecast_ctn || 0;
+    const defaultW = Math.round(totalCurrent / 4);
+    const w1 = it.week1_ctn != null ? it.week1_ctn : defaultW;
+    const w2 = it.week2_ctn != null ? it.week2_ctn : defaultW;
+    const w3 = it.week3_ctn != null ? it.week3_ctn : defaultW;
+    const w4 = it.week4_ctn != null ? it.week4_ctn : (totalCurrent - (w1 + w2 + w3));
 
     return `
       <tr>
@@ -850,30 +926,61 @@ function renderForecastTable(items) {
           <div style="font-size:0.72rem; color:var(--text-dim);">${it.pack_size || ''} • ${it.ctn_size} ${it.uom_default || 'Pcs'}/Ctn</div>
         </td>
         <td><span class="pill pill-safe">${it.category}</span></td>
+        <td style="text-align:right; color:var(--text-muted); font-weight:600;">
+          ${origCtn.toLocaleString()} Ctn
+        </td>
         <td>
           <input type="number" 
                  class="form-control forecast-input" 
-                 style="width:130px; text-align:right; font-weight:700; ${canEdit ? '' : 'background:var(--bg-tertiary); opacity:0.8; cursor:not-allowed;'}" 
+                 style="width:115px; text-align:right; font-weight:700; ${canEdit ? '' : 'background:var(--bg-tertiary); opacity:0.8; cursor:not-allowed;'}" 
                  data-sku-id="${it.sku_id}" 
                  data-ctn-size="${it.ctn_size}"
+                 data-orig-ctn="${origCtn}"
                  value="${it.forecast_ctn || 0}" 
                  min="0"
                  ${canEdit ? '' : 'disabled readonly'}
                  onchange="recalculateForecastRow(this)">
+          ${varianceFromOrig !== 0 ? `
+            <div style="font-size:0.68rem; text-align:right; margin-top:2px; font-weight:700; color:${varianceFromOrig > 0 ? 'var(--success)' : 'var(--danger)'};">
+              ${varianceFromOrig > 0 ? '+' : ''}${varianceFromOrig} Ctn
+            </div>
+          ` : ''}
+        </td>
+        <td style="text-align:center;">
+          ${revNo > 0 ? `
+            <button type="button" class="btn btn-xs pill pill-warn" onclick="openForecastRevisionsModal(${it.sku_id}, '${it.sku_name.replace(/'/g, "\\'")}')" style="cursor:pointer; border:none;" title="Click to view full revision history">
+              Rev ${revNo} <i class="fas fa-history" style="font-size:0.65rem; margin-left:2px;"></i>
+            </button>
+          ` : `
+            <span class="pill pill-safe" style="font-size:0.72rem;">Rev 0 (Base)</span>
+          `}
+        </td>
+        <td style="text-align:center;">
+          <div style="display:inline-flex; gap:3px; align-items:center;">
+            <input type="number" class="form-control form-control-sm forecast-w1" style="width:48px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${w1}" min="0" placeholder="W1" title="Week 1 (Ctn)" ${canEdit ? '' : 'disabled'} onchange="recalculateFromWeekly(this)">
+            <input type="number" class="form-control form-control-sm forecast-w2" style="width:48px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${w2}" min="0" placeholder="W2" title="Week 2 (Ctn)" ${canEdit ? '' : 'disabled'} onchange="recalculateFromWeekly(this)">
+            <input type="number" class="form-control form-control-sm forecast-w3" style="width:48px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${w3}" min="0" placeholder="W3" title="Week 3 (Ctn)" ${canEdit ? '' : 'disabled'} onchange="recalculateFromWeekly(this)">
+            <input type="number" class="form-control form-control-sm forecast-w4" style="width:48px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${w4}" min="0" placeholder="W4" title="Week 4 (Ctn)" ${canEdit ? '' : 'disabled'} onchange="recalculateFromWeekly(this)">
+          </div>
         </td>
         <td class="forecast-pcs-display" style="text-align:right; font-weight:700; color:var(--primary);">
           ${(it.forecast_pcs || 0).toLocaleString()} ${it.uom_default || 'Packets'}
         </td>
-        <td style="text-align:center;">
-          ${isSuperAdmin ? `
-            <button class="btn btn-sm btn-outline" onclick="openForecastBOMModal(${it.sku_id}, '${it.sku_name.replace(/'/g, "\\'")}')" title="View Bill of Materials Specification (Super Admin Only)">
-              <i class="fas fa-sitemap" style="color:var(--primary);"></i> View BOM
+        <td style="text-align:center; white-space:nowrap;">
+          <div style="display:inline-flex; gap:4px;">
+            ${isSuperAdmin ? `
+              <button class="btn btn-xs btn-outline" onclick="openForecastBOMModal(${it.sku_id}, '${it.sku_name.replace(/'/g, "\\'")}')" title="View Bill of Materials Specification (Super Admin Only)">
+                <i class="fas fa-sitemap" style="color:var(--primary);"></i> BOM
+              </button>
+            ` : `
+              <span class="pill pill-low" style="font-size:0.68rem; opacity:0.65; cursor:not-allowed;" title="BOM access is strictly restricted to Super Admin only">
+                <i class="fas fa-lock" style="font-size:0.65rem;"></i> Locked
+              </span>
+            `}
+            <button class="btn btn-xs btn-outline" onclick="openForecastRevisionsModal(${it.sku_id}, '${it.sku_name.replace(/'/g, "\\'")}')" title="View Revision History">
+              <i class="fas fa-history"></i> Log
             </button>
-          ` : `
-            <span class="pill pill-low" style="font-size:0.7rem; opacity:0.65; cursor:not-allowed;" title="BOM access is strictly restricted to Super Admin only">
-              <i class="fas fa-lock" style="font-size:0.65rem;"></i> Super Admin Only
-            </span>
-          `}
+          </div>
         </td>
       </tr>
     `;
@@ -883,13 +990,41 @@ function renderForecastTable(items) {
   document.getElementById('forecast-total-pieces').textContent = totalPcs.toLocaleString();
 }
 
-function recalculateForecastRow(input) {
+function recalculateFromWeekly(weeklyInp) {
+  const row = weeklyInp.closest('tr');
+  const w1 = parseFloat(row.querySelector('.forecast-w1')?.value) || 0;
+  const w2 = parseFloat(row.querySelector('.forecast-w2')?.value) || 0;
+  const w3 = parseFloat(row.querySelector('.forecast-w3')?.value) || 0;
+  const w4 = parseFloat(row.querySelector('.forecast-w4')?.value) || 0;
+  const total = w1 + w2 + w3 + w4;
+
+  const mainInp = row.querySelector('.forecast-input');
+  if (mainInp) {
+    mainInp.value = total;
+    recalculateForecastRow(mainInp, false);
+  }
+}
+
+function recalculateForecastRow(input, autoSplitWeekly = true) {
   const ctn = parseFloat(input.value) || 0;
   const ctnSize = parseFloat(input.getAttribute('data-ctn-size')) || 1;
   const row = input.closest('tr');
   const pcsDisplay = row.querySelector('.forecast-pcs-display');
   if (pcsDisplay) {
     pcsDisplay.textContent = `${(ctn * ctnSize).toLocaleString()} Packets`;
+  }
+
+  // Update weekly inputs if autoSplitWeekly is requested
+  if (autoSplitWeekly && row) {
+    const w1 = row.querySelector('.forecast-w1');
+    const w2 = row.querySelector('.forecast-w2');
+    const w3 = row.querySelector('.forecast-w3');
+    const w4 = row.querySelector('.forecast-w4');
+    const baseW = Math.round(ctn / 4);
+    if (w1) w1.value = baseW;
+    if (w2) w2.value = baseW;
+    if (w3) w3.value = baseW;
+    if (w4) w4.value = Math.max(0, ctn - (baseW * 3));
   }
 
   let grandCtn = 0;
@@ -907,26 +1042,144 @@ function recalculateForecastRow(input) {
 async function saveForecastChanges() {
   const month = document.getElementById('forecast-month-select').value;
   const items = [];
+  let hasChanges = false;
+
   document.querySelectorAll('.forecast-input').forEach(inp => {
+    const sku_id = parseInt(inp.getAttribute('data-sku-id'));
+    const forecast_ctn = parseFloat(inp.value) || 0;
+    const orig_ctn = parseFloat(inp.getAttribute('data-orig-ctn')) || 0;
+
+    const row = inp.closest('tr');
+    const week1_ctn = parseFloat(row.querySelector('.forecast-w1')?.value) || 0;
+    const week2_ctn = parseFloat(row.querySelector('.forecast-w2')?.value) || 0;
+    const week3_ctn = parseFloat(row.querySelector('.forecast-w3')?.value) || 0;
+    const week4_ctn = parseFloat(row.querySelector('.forecast-w4')?.value) || 0;
+
+    if (forecast_ctn !== orig_ctn) {
+      hasChanges = true;
+    }
+
     items.push({
-      sku_id: parseInt(inp.getAttribute('data-sku-id')),
-      forecast_ctn: parseFloat(inp.value) || 0
+      sku_id,
+      forecast_ctn,
+      week1_ctn,
+      week2_ctn,
+      week3_ctn,
+      week4_ctn
     });
   });
+
+  let revisionNotes = 'Monthly Sales Forecast Update';
+  if (hasChanges) {
+    const userReason = prompt('Sales forecast values have been adjusted. Please enter revision reason or specific period note (যেমনঃ Week 3 Promotion, Ramadan surge):', 'Periodic Demand Adjustment');
+    if (userReason !== null && userReason.trim() !== '') {
+      revisionNotes = userReason.trim();
+    }
+  }
 
   try {
     const res = await fetch('/api/forecast', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ month, items })
+      body: JSON.stringify({ 
+        month, 
+        items,
+        revision_notes: revisionNotes,
+        revised_by: AppState.currentUser?.name || 'Sales Team'
+      })
     });
     const data = await res.json();
     if (data.success) {
-      showToast(`Saved monthly forecast for ${data.count} SKUs!`, 'success');
+      showToast(`Saved forecast for ${data.count} SKUs! (Revisions logged)`, 'success');
+      loadForecastView();
       loadDashboard();
+
+      if (hasChanges) {
+        setTimeout(() => {
+          const syncProd = confirm('Sales forecast was revised. Do you want to auto-align upcoming daily production plans and store material requisitions with this new forecast?');
+          if (syncProd) {
+            triggerRealignProduction();
+          }
+        }, 600);
+      }
     }
   } catch (e) {
     showToast('Failed to save sales forecast', 'danger');
+  }
+}
+
+async function openForecastRevisionsModal(skuId, skuName) {
+  const month = document.getElementById('forecast-month-select')?.value || AppState.selectedMonth;
+  const titleEl = document.getElementById('modal-revision-sku-title');
+  const subEl = document.getElementById('modal-revision-sku-sub');
+  if (titleEl) titleEl.textContent = `${skuName} - Forecast Revision History`;
+  if (subEl) subEl.textContent = `Full audit log of all weekly/monthly adjustments made for ${month} (SKU #${skuId}).`;
+
+  const tbody = document.getElementById('modal-forecast-revisions-tbody');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:1.5rem;"><i class="fas fa-spinner fa-spin"></i> Loading revision log...</td></tr>';
+  }
+  showModal('modal-forecast-revisions');
+
+  try {
+    const res = await fetch(`/api/forecast/revisions?sku_id=${skuId}&month=${month}`);
+    const data = await res.json();
+    if (!tbody) return;
+
+    if (!data.revisions || data.revisions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:1.5rem;">No revisions found. The base initial forecast is currently active.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.revisions.map(r => {
+      const varVal = r.variance_ctn || (r.revised_ctn - r.previous_ctn);
+      return `
+        <tr>
+          <td style="text-align:center;"><span class="pill ${r.revision_no > 0 ? 'pill-warn' : 'pill-safe'}">Rev ${r.revision_no}</span></td>
+          <td>${r.revised_date || 'N/A'}</td>
+          <td style="text-align:right; font-weight:600;">${(r.previous_ctn || 0).toLocaleString()}</td>
+          <td style="text-align:right; font-weight:700; color:var(--primary);">${(r.revised_ctn || 0).toLocaleString()}</td>
+          <td style="text-align:right; font-weight:700; color:${varVal >= 0 ? 'var(--success)' : 'var(--danger)'};">
+            ${varVal >= 0 ? '+' : ''}${varVal.toLocaleString()}
+          </td>
+          <td><span style="font-size:0.82rem;">${r.reason || 'General Monthly Revision'}</span></td>
+          <td><span class="pill pill-safe" style="font-size:0.72rem;">${r.revised_by || 'Sales Team'}</span></td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {
+    if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--danger); padding:1rem;">Failed to load revision history.</td></tr>';
+  }
+}
+
+async function triggerRealignProduction() {
+  const month = document.getElementById('prod-month-select')?.value || AppState.selectedMonth;
+  const effDateInp = document.getElementById('realign-effective-date');
+  let effDate = effDateInp ? effDateInp.value : '';
+  if (!effDate) {
+    effDate = new Date().toISOString().split('T')[0];
+    if (effDateInp) effDateInp.value = effDate;
+  }
+
+  const ok = confirm(`Re-align daily production plans for ${month} starting from ${effDate} based on latest revised sales forecast? Existing daily targets and material requisitions will be re-calculated.`);
+  if (!ok) return;
+
+  try {
+    showToast('Re-aligning production plans with revised forecast...', 'info');
+    const res = await fetch('/api/production/realign-from-forecast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ month, effective_date: effDate })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Successfully re-aligned ${data.plans_adjusted} daily plans & ${data.requisitions_adjusted} requisitions!`, 'success');
+      loadProductionView();
+    } else {
+      showToast(data.error || 'Failed to re-align production plans', 'danger');
+    }
+  } catch (e) {
+    showToast('Error connecting to realignment service', 'danger');
   }
 }
 
@@ -2501,41 +2754,145 @@ async function loadReportsView() {
   loadStockSummaryReport();
 }
 
+function setReportDateFilterMode(mode) {
+  AppState.reportFilterMode = mode;
+  document.getElementById('report-mode-month-btn')?.classList.toggle('active', mode === 'month');
+  document.getElementById('report-mode-single-btn')?.classList.toggle('active', mode === 'single');
+  document.getElementById('report-mode-range-btn')?.classList.toggle('active', mode === 'range');
+
+  const monthCont = document.getElementById('report-filter-month-container');
+  const singleCont = document.getElementById('report-filter-single-container');
+  const rangeFromCont = document.getElementById('report-filter-range-from-container');
+  const rangeToCont = document.getElementById('report-filter-range-to-container');
+  const quickChips = document.getElementById('report-quick-chips-row');
+
+  if (monthCont) monthCont.style.display = mode === 'month' ? '' : 'none';
+  if (singleCont) singleCont.style.display = mode === 'single' ? '' : 'none';
+  if (rangeFromCont) rangeFromCont.style.display = mode === 'range' ? '' : 'none';
+  if (rangeToCont) rangeToCont.style.display = mode === 'range' ? '' : 'none';
+  if (quickChips) quickChips.style.display = (mode === 'single' || mode === 'range') ? 'flex' : 'none';
+}
+
+function setReportQuickDate(type) {
+  const inp = document.getElementById('report-single-date');
+  if (!inp) return;
+  const d = new Date();
+  if (type === 'yesterday') {
+    d.setDate(d.getDate() - 1);
+  }
+  inp.value = d.toISOString().split('T')[0];
+  loadForecastVsProdReport();
+}
+
+function setReportQuickRange(type) {
+  const fromInp = document.getElementById('report-date-from');
+  const toInp = document.getElementById('report-date-to');
+  if (!fromInp || !toInp) return;
+  const today = new Date();
+  toInp.value = today.toISOString().split('T')[0];
+
+  if (type === 'week') {
+    const f = new Date();
+    f.setDate(f.getDate() - 7);
+    fromInp.value = f.toISOString().split('T')[0];
+  } else if (type === 'mtd') {
+    fromInp.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+  } else if (type === 'full_month') {
+    const y = today.getFullYear();
+    const m = today.getMonth() + 1;
+    const lastDay = new Date(y, m, 0).getDate();
+    fromInp.value = `${y}-${String(m).padStart(2, '0')}-01`;
+    toInp.value = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  }
+  loadForecastVsProdReport();
+}
+
 async function loadForecastVsProdReport() {
-  const cat = AppState.selectedCategory;
-  const month = AppState.selectedMonth;
+  const cat = document.getElementById('report-category-select')?.value || AppState.selectedCategory;
+  const mode = AppState.reportFilterMode || 'month';
   const uom = AppState.displayUOM;
   const isCarton = uom === 'Carton';
 
+  let url = `/api/reports/forecast-vs-production?category=${cat}&uom=${uom}`;
+  let filterSummary = '';
+
+  if (mode === 'single') {
+    const pDate = document.getElementById('report-single-date')?.value || '2026-07-24';
+    url += `&plan_date=${pDate}`;
+    filterSummary = `Specific Date: ${pDate}`;
+  } else if (mode === 'range') {
+    const dFrom = document.getElementById('report-date-from')?.value || '2026-07-01';
+    const dTo = document.getElementById('report-date-to')?.value || '2026-07-31';
+    url += `&date_from=${dFrom}&date_to=${dTo}`;
+    filterSummary = `Date Range: ${dFrom} to ${dTo}`;
+  } else {
+    const month = document.getElementById('report-month-select')?.value || AppState.selectedMonth;
+    url += `&month=${month}`;
+    filterSummary = `Full Month: ${month}`;
+  }
+
+  const badge = document.getElementById('report-filter-summary-badge');
+  if (badge) badge.textContent = `Filter: ${filterSummary} (${cat === 'ALL' ? 'All Units' : 'Unit ' + cat})`;
+
+  const titleSpan = document.getElementById('report-forecast-prod-title');
+  if (titleSpan) titleSpan.textContent = `Forecast vs Production Report (${filterSummary})`;
+
   try {
-    const res = await fetch(`/api/reports/forecast-vs-production?category=${cat}&month=${month}&uom=${uom}`);
+    const res = await fetch(url);
     const data = await res.json();
     const tbody = document.getElementById('report-forecast-prod-tbody');
     if (!tbody) return;
 
+    if (!data.items || data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; color:var(--text-muted); padding:1.5rem;">No production or forecast data found for this selection.</td></tr>';
+      return;
+    }
+
     tbody.innerHTML = data.items.map(it => {
-      const fcVal = isCarton ? it.forecast_ctn : (it.forecast_ctn * it.ctn_size);
+      const origFcVal = isCarton ? (it.original_forecast_ctn || it.forecast_ctn) : ((it.original_forecast_ctn || it.forecast_ctn) * it.ctn_size);
+      const activeFcVal = isCarton ? it.forecast_ctn : (it.forecast_ctn * it.ctn_size);
       const planVal = isCarton ? it.planned_ctn : (it.planned_ctn * it.ctn_size);
       const actVal = isCarton ? it.actual_produced_ctn : (it.actual_produced_ctn * it.ctn_size);
-      const varVal = actVal - fcVal;
+      const varVal = actVal - activeFcVal;
       const uomLabel = isCarton ? 'Ctn' : (it.uom_default || 'Pcs');
+
+      let statusBadge = '';
+      if (it.forecast_achievement_pct >= 100) {
+        statusBadge = '<span class="pill pill-safe"><i class="fas fa-check-circle"></i> Exceeded</span>';
+      } else if (it.forecast_achievement_pct >= 80) {
+        statusBadge = '<span class="pill pill-safe"><i class="fas fa-check"></i> On Target</span>';
+      } else if (it.forecast_achievement_pct >= 50) {
+        statusBadge = '<span class="pill pill-warn"><i class="fas fa-exclamation-circle"></i> In Progress</span>';
+      } else {
+        statusBadge = '<span class="pill pill-danger"><i class="fas fa-times-circle"></i> Shortfall</span>';
+      }
 
       return `
         <tr>
           <td><strong>${it.sku_code}</strong></td>
-          <td><strong>${it.sku_name}</strong></td>
-          <td>Unit ${it.category_code}</td>
-          <td><strong>${fcVal.toLocaleString()}</strong> ${uomLabel}</td>
-          <td>${planVal.toLocaleString()} ${uomLabel}</td>
-          <td style="font-weight:700; color:var(--success);">${actVal.toLocaleString()} ${uomLabel}</td>
-          <td style="color:${varVal >= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:700;">
+          <td>
+            <div style="font-weight:600;">${it.sku_name}</div>
+            <div style="font-size:0.72rem; color:var(--text-dim);">${it.pack_size || ''} • ${it.ctn_size} Pcs/Ctn</div>
+          </td>
+          <td><span class="pill pill-safe">Unit ${it.category_code}</span></td>
+          <td style="text-align:right; color:var(--text-muted);">${origFcVal.toLocaleString()} ${uomLabel}</td>
+          <td style="text-align:right; font-weight:700; color:var(--primary);">
+            ${activeFcVal.toLocaleString()} ${uomLabel}
+          </td>
+          <td style="text-align:center;">
+            ${(it.revision_no || 0) > 0 ? `<button type="button" class="btn btn-xs pill pill-warn" onclick="openForecastRevisionsModal(${it.sku_id}, '${it.sku_name.replace(/'/g, "\\'")}')" style="cursor:pointer; border:none;" title="Click to view full revision history">Rev ${it.revision_no}</button>` : `<span class="pill pill-safe" style="font-size:0.72rem;">Rev 0</span>`}
+          </td>
+          <td style="text-align:right;">${planVal.toLocaleString()} ${uomLabel}</td>
+          <td style="text-align:right; font-weight:700; color:var(--success);">${actVal.toLocaleString()} ${uomLabel}</td>
+          <td style="text-align:right; font-weight:700; color:${varVal >= 0 ? 'var(--success)' : 'var(--danger)'};">
             ${varVal >= 0 ? '+' : ''}${varVal.toLocaleString()}
           </td>
-          <td>
-            <span class="pill ${it.forecast_achievement_pct >= 80 ? 'pill-safe' : 'pill-low'}">
+          <td style="text-align:center;">
+            <span class="pill ${it.forecast_achievement_pct >= 80 ? 'pill-safe' : (it.forecast_achievement_pct >= 50 ? 'pill-warn' : 'pill-danger')}" style="font-weight:700;">
               ${it.forecast_achievement_pct}%
             </span>
           </td>
+          <td style="text-align:center;">${statusBadge}</td>
         </tr>
       `;
     }).join('');
@@ -2692,12 +3049,20 @@ async function submitBulkProduction() {
 
 // Super Admin Data Clear Tool
 function openClearDataModal() {
+  if (!isSuperAdminUser()) {
+    showToast('Access Denied (নিরাপত্তা সীমাবদ্ধতা): Only Super Admin has permission to access the System Reset & Data Cleanup Tool.', 'danger');
+    return;
+  }
   const c = document.getElementById('clear-data-confirm-input');
   if (c) c.value = '';
   showModal('modal-clear-data');
 }
 
 async function submitClearData() {
+  if (!isSuperAdminUser()) {
+    showToast('Access Denied (নিরাপত্তা সীমাবদ্ধতা): Only Super Admin can perform data cleanup operations.', 'danger');
+    return;
+  }
   const section = document.getElementById('clear-data-section').value;
   const category = document.getElementById('clear-data-category').value;
   const rangeType = document.getElementById('clear-data-range-type').value;

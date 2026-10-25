@@ -64,40 +64,6 @@
           <i class="fas fa-sign-in-alt"></i> Login to Portal
         </button>
       </form>
-
-      <!-- Quick Test Accounts for Instant Verification -->
-      <div class="quick-accounts-box">
-        <div class="quick-accounts-title">
-          <span>Demo Test Accounts</span>
-          <span>(Click to Auto-fill & Login)</span>
-        </div>
-        <div class="quick-pills">
-          <div class="quick-pill" onclick="quickFillLogin('super_admin', 'admin123')">
-            <strong>👑 Super Admin</strong>
-            <span>super_admin / admin123 (All Units)</span>
-          </div>
-          <div class="quick-pill" onclick="quickFillLogin('admin', 'admin123')">
-            <strong>🛡️ General Admin</strong>
-            <span>admin / admin123 (Viewer & Reports)</span>
-          </div>
-          <div class="quick-pill" onclick="quickFillLogin('dry_store', 'store123')">
-            <strong>🏪 Dry Food Store</strong>
-            <span>dry_store / store123 (Unit 05)</span>
-          </div>
-          <div class="quick-pill" onclick="quickFillLogin('frozen_store', 'store123')">
-            <strong>❄️ Frozen Food Store</strong>
-            <span>frozen_store / store123 (Unit 02)</span>
-          </div>
-          <div class="quick-pill" onclick="quickFillLogin('dry_prod', 'prod123')">
-            <strong>⚙️ Dry Food Prod.</strong>
-            <span>dry_prod / prod123 (Unit 05)</span>
-          </div>
-          <div class="quick-pill" onclick="quickFillLogin('frozen_prod', 'prod123')">
-            <strong>🍗 Frozen Food Prod.</strong>
-            <span>frozen_prod / prod123 (Unit 02)</span>
-          </div>
-        </div>
-      </div>
     </div>
   </div>
 
@@ -476,9 +442,12 @@
                   <th>SKU Code</th>
                   <th>Finished Good / Description</th>
                   <th>Category</th>
-                  <th style="text-align:right;">Forecast (Cartons)</th>
+                  <th style="text-align:right;">Original (Ctn)</th>
+                  <th style="text-align:right;">Active Forecast (Ctn)</th>
+                  <th style="text-align:center;">Rev #</th>
+                  <th style="text-align:center;">Weekly Breakdown (W1-W4)</th>
                   <th style="text-align:right;">Total Output Units</th>
-                  <th>BOM Setup</th>
+                  <th style="text-align:center;">BOM & History</th>
                 </tr>
               </thead>
               <tbody id="forecast-table-body">
@@ -489,7 +458,7 @@
         </div>
 
         <!-- Super Admin Data Clear Danger Zone -->
-        <div class="danger-zone-card admin-only">
+        <div class="danger-zone-card admin-only" style="display: none !important;">
           <div class="danger-zone-header">
             <i class="fas fa-exclamation-triangle"></i> Super Admin System Reset & Data Cleanup Tool
           </div>
@@ -592,6 +561,32 @@
           </div>
         </div>
 
+        <!-- Forecast Revision Alert Banner & Auto-Realignment -->
+        <div id="prod-forecast-revision-alert" class="card" style="margin-bottom:1rem; background:linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(234, 88, 12, 0.08)); border:1px solid rgba(245, 158, 11, 0.35); padding:1rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
+          <div style="display:flex; align-items:center; gap:0.75rem;">
+            <div style="width:38px; height:38px; border-radius:50%; background:rgba(245, 158, 11, 0.2); display:flex; align-items:center; justify-content:center; color:#f59e0b; font-size:1.1rem;">
+              <i class="fas fa-sync-alt"></i>
+            </div>
+            <div>
+              <div style="font-weight:700; color:var(--text-main); font-size:0.95rem;">
+                Sales Forecast Revision & Production Alignment (ফোরকাস্ট সংশোধন ও প্রডাকশন সমন্বয়)
+              </div>
+              <div style="font-size:0.78rem; color:var(--text-muted);">
+                When Sales updates the monthly forecast for specific weeks/periods, re-align future daily production plans & store requisitions.
+              </div>
+            </div>
+          </div>
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:0.35rem;">
+              <label style="font-size:0.75rem; color:var(--text-muted); font-weight:600;">Effective From:</label>
+              <input type="date" id="realign-effective-date" class="form-control form-control-sm" style="width:140px;" title="Effective Date from which to re-align daily plans">
+            </div>
+            <button type="button" class="btn btn-sm btn-primary" onclick="triggerRealignProduction()" style="background:#f59e0b; border-color:#d97706; color:#fff; font-weight:600;">
+              <i class="fas fa-bolt"></i> Auto-Align Daily Plans with Revised Forecast
+            </button>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-header">
             <div class="card-title">
@@ -624,7 +619,7 @@
         </div>
 
         <!-- Super Admin Data Clear Danger Zone -->
-        <div class="danger-zone-card admin-only">
+        <div class="danger-zone-card admin-only" style="display: none !important;">
           <div class="danger-zone-header">
             <i class="fas fa-exclamation-triangle"></i> Super Admin System Reset & Data Cleanup Tool
           </div>
@@ -857,7 +852,7 @@
         </div>
 
         <!-- Super Admin Data Clear Danger Zone -->
-        <div class="danger-zone-card admin-only">
+        <div class="danger-zone-card admin-only" style="display: none !important;">
           <div class="danger-zone-header">
             <i class="fas fa-exclamation-triangle"></i> Super Admin System Reset & Data Cleanup Tool
           </div>
@@ -1106,11 +1101,85 @@
           </div>
         </div>
 
+        <!-- Forecast vs Production Multi-Date/Month Filter Bar -->
+        <div class="card" style="margin-bottom:1rem; padding:1rem; background:var(--bg-secondary); border:1px solid var(--border-color);">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:0.75rem;">
+            <div style="font-weight:700; font-size:0.95rem; color:var(--text-main); display:flex; align-items:center; gap:0.5rem;">
+              <i class="fas fa-filter" style="color:var(--primary);"></i>
+              Report Filters (তারিখ ও মাস অনুযায়ী ফিল্টার করুন)
+            </div>
+            <div class="date-dropdown-mode-tabs" style="display:flex; gap:0.25rem;">
+              <button type="button" class="date-mode-btn active" id="report-mode-month-btn" onclick="setReportDateFilterMode('month')">Full Month</button>
+              <button type="button" class="date-mode-btn" id="report-mode-single-btn" onclick="setReportDateFilterMode('single')">Single Date (নির্দিষ্ট দিন)</button>
+              <button type="button" class="date-mode-btn" id="report-mode-range-btn" onclick="setReportDateFilterMode('range')">Date Range (পরিসর)</button>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.75rem; align-items:end;">
+            <!-- Month Selector -->
+            <div id="report-filter-month-container">
+              <label class="form-label" style="font-size:0.75rem; font-weight:600; margin-bottom:3px;">Select Month:</label>
+              <select class="form-control form-control-sm" id="report-month-select" onchange="if(AppState.reportFilterMode === 'month') loadForecastVsProdReport();">
+                <option value="2026-07" selected>📅 2026-07 (July 2026)</option>
+                <option value="2026-08">📅 2026-08 (August 2026)</option>
+                <option value="2026-06">📅 2026-06 (June 2026)</option>
+              </select>
+            </div>
+
+            <!-- Single Date Selector -->
+            <div id="report-filter-single-container" style="display:none;">
+              <label class="form-label" style="font-size:0.75rem; font-weight:600; margin-bottom:3px;">Specific Date (নির্দিষ্ট দিন):</label>
+              <input type="date" class="form-control form-control-sm" id="report-single-date" value="2026-07-24">
+            </div>
+
+            <!-- Date Range From/To -->
+            <div id="report-filter-range-from-container" style="display:none;">
+              <label class="form-label" style="font-size:0.75rem; font-weight:600; margin-bottom:3px;">From Date (শুরু):</label>
+              <input type="date" class="form-control form-control-sm" id="report-date-from" value="2026-07-01">
+            </div>
+            <div id="report-filter-range-to-container" style="display:none;">
+              <label class="form-label" style="font-size:0.75rem; font-weight:600; margin-bottom:3px;">To Date (শেষ):</label>
+              <input type="date" class="form-control form-control-sm" id="report-date-to" value="2026-07-31">
+            </div>
+
+            <!-- Category Selector -->
+            <div>
+              <label class="form-label" style="font-size:0.75rem; font-weight:600; margin-bottom:3px;">Category / Business Unit:</label>
+              <select class="form-control form-control-sm" id="report-category-select">
+                <option value="ALL">All Categories (সকল ইউনিট)</option>
+                <option value="05">Unit 05 - Dry Foods</option>
+                <option value="02">Unit 02 - Frozen Foods</option>
+                <option value="01">Unit 01 - Broiler Chicken</option>
+              </select>
+            </div>
+
+            <!-- Apply Button -->
+            <div>
+              <button type="button" class="btn btn-sm btn-primary" onclick="loadForecastVsProdReport()" style="width:100%; height:34px;">
+                <i class="fas fa-search"></i> Apply Filter
+              </button>
+            </div>
+          </div>
+
+          <!-- Quick Chips for Range & Single -->
+          <div id="report-quick-chips-row" style="display:none; margin-top:0.6rem; gap:0.4rem; flex-wrap:wrap;">
+            <span style="font-size:0.72rem; color:var(--text-muted); align-self:center;">Quick Picks:</span>
+            <button type="button" class="chip-btn" onclick="setReportQuickDate('today')">Today</button>
+            <button type="button" class="chip-btn" onclick="setReportQuickDate('yesterday')">Yesterday</button>
+            <button type="button" class="chip-btn" onclick="setReportQuickRange('week')">Last 7 Days</button>
+            <button type="button" class="chip-btn" onclick="setReportQuickRange('mtd')">Month to Date (MTD)</button>
+            <button type="button" class="chip-btn" onclick="setReportQuickRange('full_month')">Full Current Month</button>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-header">
             <div class="card-title">
               <i class="fas fa-balance-scale" style="color:var(--primary);"></i>
-              Forecast vs Production Performance Report (July 2026)
+              <span id="report-forecast-prod-title">Forecast vs Production Performance Report</span>
+            </div>
+            <div id="report-filter-summary-badge" class="pill pill-safe" style="font-size:0.75rem;">
+              Filter: Full Month (July 2026)
             </div>
           </div>
           <div class="table-responsive">
@@ -1119,12 +1188,15 @@
                 <tr>
                   <th>SKU Code</th>
                   <th>Product Name</th>
-                  <th>Unit / Cat</th>
-                  <th>Forecast</th>
-                  <th>Planned</th>
-                  <th>Actual Output</th>
-                  <th>Variance</th>
-                  <th>Achievement %</th>
+                  <th>Category</th>
+                  <th style="text-align:right;">Original Forecast</th>
+                  <th style="text-align:right;">Revised Forecast</th>
+                  <th style="text-align:center;">Rev #</th>
+                  <th style="text-align:right;">Planned Target</th>
+                  <th style="text-align:right;">Actual Produced</th>
+                  <th style="text-align:right;">Variance</th>
+                  <th style="text-align:center;">Achievement %</th>
+                  <th style="text-align:center;">Status</th>
                 </tr>
               </thead>
               <tbody id="report-forecast-prod-tbody">
@@ -1166,7 +1238,7 @@
         </div>
 
         <!-- Super Admin Data Clear Danger Zone -->
-        <div class="danger-zone-card admin-only">
+        <div class="danger-zone-card admin-only" style="display: none !important;">
           <div class="danger-zone-header">
             <i class="fas fa-exclamation-triangle"></i> Super Admin System Reset & Data Cleanup Tool
           </div>
@@ -1223,7 +1295,7 @@
         </div>
 
         <!-- Super Admin Data Clear Danger Zone -->
-        <div class="danger-zone-card admin-only">
+        <div class="danger-zone-card admin-only" style="display: none !important;">
           <div class="danger-zone-header">
             <i class="fas fa-exclamation-triangle"></i> Super Admin System Reset & Data Cleanup Tool
           </div>
@@ -2461,6 +2533,47 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline" onclick="hideModal('modal-floor-stock')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: SALES FORECAST REVISION AUDIT TRAIL ================= -->
+  <div class="modal-backdrop" id="modal-forecast-revisions">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" style="display:flex; align-items:center; gap:0.5rem;">
+            <i class="fas fa-history" style="color:var(--primary);"></i>
+            <span id="modal-revision-sku-title">Sales Forecast Revision History</span>
+          </div>
+          <div style="font-size:0.78rem; color:var(--text-muted); margin-top:3px;" id="modal-revision-sku-sub">
+            Audit trail of all forecast adjustments made within this month.
+          </div>
+        </div>
+        <button class="modal-close" onclick="hideModal('modal-forecast-revisions')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="text-align:center;">Rev #</th>
+                <th>Revision Date</th>
+                <th style="text-align:right;">Previous (Ctn)</th>
+                <th style="text-align:right;">Revised (Ctn)</th>
+                <th style="text-align:right;">Variance</th>
+                <th>Reason / Period Notes</th>
+                <th>Revised By</th>
+              </tr>
+            </thead>
+            <tbody id="modal-forecast-revisions-tbody">
+              <!-- Injected via JavaScript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="hideModal('modal-forecast-revisions')">Close</button>
       </div>
     </div>
   </div>

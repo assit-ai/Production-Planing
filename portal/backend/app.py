@@ -2,6 +2,10 @@ import os
 import sqlite3
 import json
 import io
+import hmac
+import hashlib
+import base64
+import time
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_file, render_template
 
@@ -26,17 +30,23 @@ if os.environ.get("VERCEL"):
 from turso_client import TursoConnection, test_turso_connection, migrate_local_sqlite_to_turso
 
 TURSO_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "turso_config.json")
+TMP_TURSO_CONFIG = "/tmp/turso_config.json"
 
 def get_turso_credentials():
     url = os.environ.get("TURSO_DATABASE_URL")
     token = os.environ.get("TURSO_AUTH_TOKEN")
-    if not url or not token:
-        if os.path.exists(TURSO_CONFIG_PATH):
+    if url and token:
+        return url, token
+
+    for cfg_path in (TMP_TURSO_CONFIG, TURSO_CONFIG_PATH):
+        if os.path.exists(cfg_path):
             try:
-                with open(TURSO_CONFIG_PATH, "r", encoding="utf-8") as f:
+                with open(cfg_path, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
                     url = cfg.get("url") or url
                     token = cfg.get("token") or token
+                    if url and token:
+                        return url, token
             except Exception:
                 pass
     return url, token
@@ -67,11 +77,69 @@ def style_merged_range(ws, cell_range, font=None, fill=None, border=None, alignm
 def rows_to_dict(rows):
     return [dict(row) for row in rows]
 
-# Current user session
+# ----------------- STATELESS HMAC SIGNED SESSIONS (VERCEL SERVERLESS SAFE) -----------------
+SECRET_KEY = os.environ.get("SESSION_SECRET", "paragon_planning_enterprise_secret_key_2026")
+
+def generate_session_token(user_data):
+    payload = {
+        "u": {
+            "id": user_data.get("id"),
+            "username": user_data.get("username"),
+            "name": user_data.get("name"),
+            "role": user_data.get("role"),
+            "department": user_data.get("department", ""),
+            "allowed_category": user_data.get("allowed_category", "ALL"),
+            "must_change_password": user_data.get("must_change_password", False)
+        },
+        "exp": int(time.time()) + (86400 * 30) # 30 days session
+    }
+    payload_json = json.dumps(payload, separators=(',', ':'))
+    b64_data = base64.urlsafe_b64encode(payload_json.encode('utf-8')).decode('utf-8').rstrip('=')
+    sig = hmac.new(SECRET_KEY.encode('utf-8'), b64_data.encode('utf-8'), hashlib.sha256).hexdigest()
+    return f"{b64_data}.{sig}"
+
+def verify_session_token(token_str):
+    if not token_str or "." not in token_str:
+        return None
+    try:
+        b64_data, sig = token_str.rsplit(".", 1)
+        expected_sig = hmac.new(SECRET_KEY.encode('utf-8'), b64_data.encode('utf-8'), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected_sig):
+            return None
+        padding = '=' * (4 - (len(b64_data) % 4)) if len(b64_data) % 4 != 0 else ''
+        payload = json.loads(base64.urlsafe_b64decode(b64_data + padding).decode('utf-8'))
+        if payload.get("exp", 0) < time.time():
+            return None
+        return payload.get("u")
+    except Exception:
+        return None
+
+# In-memory fallback for local single-process dev
 CURRENT_SESSION = {}
 
+def get_current_session():
+    # 1. Check Authorization header: Bearer <token>
+    auth_header = request.headers.get("Authorization", "")
+    token = ""
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    # 2. Check X-Session-Token header
+    if not token:
+        token = request.headers.get("X-Session-Token", "").strip()
+    # 3. Check Cookie
+    if not token:
+        token = request.cookies.get("paragon_session_token", "").strip()
+
+    if token:
+        user_info = verify_session_token(token)
+        if user_info:
+            return user_info
+
+    return CURRENT_SESSION
+
 def check_role_permission(allowed_roles, action_desc="perform this action"):
-    user_role = CURRENT_SESSION.get("role")
+    session = get_current_session()
+    user_role = session.get("role")
     if not user_role:
         return False, jsonify({"error": "Unauthorized: Please log in."}), 401
     if user_role in ("Super Admin", "Admin"):
@@ -85,9 +153,10 @@ def check_role_permission(allowed_roles, action_desc="perform this action"):
 # ----------------- AUTH & USER MANAGEMENT -----------------
 @app.route("/api/auth/current-user", methods=["GET"])
 def get_current_user():
-    if not CURRENT_SESSION or "id" not in CURRENT_SESSION:
+    session = get_current_session()
+    if not session or "id" not in session:
         return jsonify({"authenticated": False}), 401
-    return jsonify({"authenticated": True, "user": CURRENT_SESSION})
+    return jsonify({"authenticated": True, "user": session})
 
 @app.route("/api/auth/login", methods=["POST"])
 def login_user():
@@ -100,25 +169,42 @@ def login_user():
     conn.close()
     
     if user:
-        CURRENT_SESSION["id"] = user["id"]
-        CURRENT_SESSION["username"] = user["username"]
-        CURRENT_SESSION["name"] = user["name"]
-        CURRENT_SESSION["role"] = user["role"]
-        CURRENT_SESSION["department"] = user["department"]
-        CURRENT_SESSION["allowed_category"] = user["allowed_category"]
         user_keys = user.keys() if hasattr(user, 'keys') else []
-        CURRENT_SESSION["must_change_password"] = bool(user["must_change_password"]) if "must_change_password" in user_keys else False
-        return jsonify({"success": True, "user": CURRENT_SESSION})
+        must_change = bool(user["must_change_password"]) if "must_change_password" in user_keys else False
+        user_role = user["role"]
+        # Treat 'Admin' as 'Super Admin'
+        if user_role == "Admin":
+            user_role = "Super Admin"
+
+        user_dict = {
+            "id": user["id"],
+            "username": user["username"],
+            "name": user["name"],
+            "role": user_role,
+            "department": user["department"],
+            "allowed_category": user["allowed_category"],
+            "must_change_password": must_change
+        }
+        token = generate_session_token(user_dict)
+        CURRENT_SESSION.clear()
+        CURRENT_SESSION.update(user_dict)
+
+        resp = jsonify({"success": True, "user": user_dict, "token": token})
+        resp.set_cookie("paragon_session_token", token, max_age=86400 * 30, httponly=False, samesite="Lax")
+        return resp
     return jsonify({"error": "Invalid username or password"}), 401
 
 @app.route("/api/auth/logout", methods=["POST"])
 def logout_user():
     CURRENT_SESSION.clear()
-    return jsonify({"success": True})
+    resp = jsonify({"success": True})
+    resp.delete_cookie("paragon_session_token")
+    return resp
 
 @app.route("/api/auth/change-password", methods=["POST"])
 def change_password():
-    if not CURRENT_SESSION or "id" not in CURRENT_SESSION:
+    session = get_current_session()
+    if not session or "id" not in session:
         return jsonify({"error": "Unauthorized: Please log in first"}), 401
     data = request.json or {}
     old_password = data.get("old_password", "").strip()
@@ -132,16 +218,19 @@ def change_password():
         return jsonify({"error": "New password must be different from current password"}), 400
         
     conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE id = ?", (CURRENT_SESSION["id"],)).fetchone()
+    user = conn.execute("SELECT * FROM users WHERE id = ?", (session["id"],)).fetchone()
     if not user or user["password"] != old_password:
         conn.close()
         return jsonify({"error": "Incorrect current password"}), 400
         
-    conn.execute("UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?", (new_password, CURRENT_SESSION["id"]))
+    conn.execute("UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?", (new_password, session["id"]))
     conn.commit()
     conn.close()
-    CURRENT_SESSION["must_change_password"] = False
-    return jsonify({"success": True, "message": "Password updated successfully!"})
+    session["must_change_password"] = False
+    new_token = generate_session_token(session)
+    resp = jsonify({"success": True, "message": "Password updated successfully!", "token": new_token})
+    resp.set_cookie("paragon_session_token", new_token, max_age=86400 * 30, httponly=False, samesite="Lax")
+    return resp
 
 @app.route("/api/auth/switch-role", methods=["POST"])
 def switch_role():
@@ -151,15 +240,23 @@ def switch_role():
     user = conn.execute("SELECT * FROM users WHERE role = ? AND is_active = 1 LIMIT 1", (role,)).fetchone()
     conn.close()
     if user:
-        CURRENT_SESSION["id"] = user["id"]
-        CURRENT_SESSION["username"] = user["username"]
-        CURRENT_SESSION["name"] = user["name"]
-        CURRENT_SESSION["role"] = user["role"]
-        CURRENT_SESSION["department"] = user["department"]
-        CURRENT_SESSION["allowed_category"] = user["allowed_category"]
         user_keys = user.keys() if hasattr(user, 'keys') else []
-        CURRENT_SESSION["must_change_password"] = bool(user["must_change_password"]) if "must_change_password" in user_keys else False
-        return jsonify({"success": True, "user": CURRENT_SESSION})
+        must_change = bool(user["must_change_password"]) if "must_change_password" in user_keys else False
+        user_dict = {
+            "id": user["id"],
+            "username": user["username"],
+            "name": user["name"],
+            "role": user["role"],
+            "department": user["department"],
+            "allowed_category": user["allowed_category"],
+            "must_change_password": must_change
+        }
+        token = generate_session_token(user_dict)
+        CURRENT_SESSION.clear()
+        CURRENT_SESSION.update(user_dict)
+        resp = jsonify({"success": True, "user": user_dict, "token": token})
+        resp.set_cookie("paragon_session_token", token, max_age=86400 * 30, httponly=False, samesite="Lax")
+        return resp
     return jsonify({"error": "Role not found"}), 404
 
 @app.route("/api/users", methods=["GET"])
@@ -301,7 +398,7 @@ def api_test_turso():
 
 @app.route("/api/cloud/turso/config", methods=["POST"])
 def api_save_turso_config():
-    allowed, err_resp, err_code = check_role_permission(["Super Admin"], "configure cloud database")
+    allowed, err_resp, err_code = check_role_permission(["Super Admin", "Admin"], "configure cloud database")
     if not allowed:
         return err_resp, err_code
     data = request.json or {}
@@ -313,8 +410,19 @@ def api_save_turso_config():
     if not res.get("success"):
         return jsonify({"success": False, "error": f"Connection test failed: {res.get('error')}"}), 400
 
-    with open(TURSO_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump({"url": url, "token": token}, f, indent=2)
+    saved = False
+    try:
+        with open(TURSO_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"url": url, "token": token}, f, indent=2)
+        saved = True
+    except OSError:
+        # Vercel Serverless read-only filesystem: write to /tmp
+        try:
+            with open(TMP_TURSO_CONFIG, "w", encoding="utf-8") as f:
+                json.dump({"url": url, "token": token}, f, indent=2)
+            saved = True
+        except Exception as e:
+            print("Could not write config to /tmp:", e)
 
     os.environ["TURSO_DATABASE_URL"] = url
     os.environ["TURSO_AUTH_TOKEN"] = token
@@ -322,7 +430,7 @@ def api_save_turso_config():
 
 @app.route("/api/cloud/turso/migrate", methods=["POST"])
 def api_migrate_to_turso():
-    allowed, err_resp, err_code = check_role_permission(["Super Admin"], "migrate database to cloud")
+    allowed, err_resp, err_code = check_role_permission(["Super Admin", "Admin"], "migrate database to cloud")
     if not allowed:
         return err_resp, err_code
     turso_url, turso_token = get_turso_credentials()
@@ -332,7 +440,13 @@ def api_migrate_to_turso():
     if not url or not token:
         return jsonify({"success": False, "error": "Turso Database URL and Auth Token are required."}), 400
     
-    res = migrate_local_sqlite_to_turso(DB_PATH, url, token)
+    source_db = DB_PATH
+    if not os.path.exists(source_db):
+        bundled = os.path.join(os.path.dirname(__file__), "planning_system.db")
+        if os.path.exists(bundled):
+            source_db = bundled
+
+    res = migrate_local_sqlite_to_turso(source_db, url, token)
     return jsonify(res)
 
 # ----------------- POLOXY ERP SETTINGS & SYNC -----------------
@@ -443,7 +557,7 @@ def sync_poloxy_erp():
         else:
             # Auto-instantiate plans for active SKUs
             skus = conn.execute("SELECT id, sku_code, name, ctn_size FROM skus WHERE category_code = ? LIMIT 8", (cat_code,)).fetchall()
-            max_id = conn.execute("SELECT COALESCE(MAX(id), 0) AS max_id FROM production_plans").fetchone()["max_id"]
+            max_id = int(conn.execute("SELECT COALESCE(MAX(id), 0) AS max_id FROM production_plans").fetchone()["max_id"] or 0)
             new_plan_ids = []
             for idx, sku in enumerate(skus):
                 p_no = f"PP-{cat_code}-{month.replace('-', '')}-{max_id + idx + 1:03d}"
@@ -756,7 +870,7 @@ def create_sku():
     conn = get_db()
     sku_code = data.get("sku_code", "").strip()
     if not sku_code:
-        max_id = conn.execute("SELECT MAX(id) FROM skus").fetchone()[0] or 0
+        max_id = int(conn.execute("SELECT MAX(id) FROM skus").fetchone()[0] or 0)
         sku_code = f"SKU-{cat_code}-{max_id + 1:03d}"
         
     try:
@@ -885,7 +999,7 @@ def create_material():
     conn = get_db()
     item_code = data.get("item_code", "").strip()
     if not item_code:
-        max_id = conn.execute("SELECT MAX(id) FROM materials WHERE type = ?", (m_type,)).fetchone()[0] or 0
+        max_id = int(conn.execute("SELECT MAX(id) FROM materials WHERE type = ?", (m_type,)).fetchone()[0] or 0)
         prefix = f"{m_type}-{cat_code}"
         item_code = f"{prefix}-{max_id + 1:03d}"
         
@@ -1105,8 +1219,18 @@ def get_forecast():
     conn = get_db()
     sql = """
         SELECT s.id AS sku_id, s.category_code, s.sku_code, s.name AS sku_name, s.category, s.ctn_size, s.pack_size, s.uom_default,
-               COALESCE(sf.forecast_ctn, 0) AS forecast_ctn,
-               COALESCE(sf.forecast_ctn, 0) * s.ctn_size AS forecast_pcs
+               COALESCE(sf.original_forecast_ctn, sf.forecast_ctn, 0.0) AS original_forecast_ctn,
+               COALESCE(sf.forecast_ctn, 0.0) AS forecast_ctn,
+               COALESCE(sf.forecast_ctn, 0.0) * s.ctn_size AS forecast_pcs,
+               COALESCE(sf.original_forecast_ctn, sf.forecast_ctn, 0.0) * s.ctn_size AS original_forecast_pcs,
+               COALESCE(sf.revision_no, 0) AS revision_no,
+               sf.revised_date,
+               sf.revision_notes,
+               (COALESCE(sf.forecast_ctn, 0.0) - COALESCE(sf.original_forecast_ctn, sf.forecast_ctn, 0.0)) AS variance_from_original,
+               COALESCE(sf.week1_ctn, 0.0) AS week1_ctn,
+               COALESCE(sf.week2_ctn, 0.0) AS week2_ctn,
+               COALESCE(sf.week3_ctn, 0.0) AS week3_ctn,
+               COALESCE(sf.week4_ctn, 0.0) AS week4_ctn
         FROM skus s
         LEFT JOIN sales_forecast sf ON s.id = sf.sku_id AND sf.month_year = ?
         WHERE s.status = 'Active'
@@ -1125,10 +1249,15 @@ def get_forecast():
         month_list = ["2026-07", "2026-08", "2026-09", "2026-10", "2026-11", "2026-12",
                       "2027-01", "2027-02", "2027-03", "2027-04", "2027-05", "2027-06"]
 
+    # Overall category revision status
+    max_rev = conn.execute("SELECT MAX(COALESCE(revision_no, 0)) AS max_rev FROM sales_forecast WHERE month_year = ?", (month,)).fetchone()
+    current_rev_no = int(max_rev["max_rev"] or 0) if max_rev else 0
+
     conn.close()
     return jsonify({
         "month": month,
         "uom": uom,
+        "revision_no": current_rev_no,
         "available_months": month_list,
         "items": rows_to_dict(rows)
     })
@@ -1140,28 +1269,90 @@ def save_forecast():
         return err_resp, err_code
     data = request.json or {}
     month = data.get("month", "2026-07")
-    items = data.get("items", []) # [{sku_id, forecast_ctn}]
+    items = data.get("items", []) # [{sku_id, forecast_ctn, week1_ctn, week2_ctn, week3_ctn, week4_ctn}]
+    revision_date = data.get("revision_date", datetime.now().strftime("%Y-%m-%d"))
+    revision_reason = data.get("revision_reason", "Monthly Forecast Update")
+    is_revision = data.get("is_revision", False)
     
     conn = get_db()
     cursor = conn.cursor()
     try:
+        updated_count = 0
         for it in items:
             sku_id = it.get("sku_id")
-            val = float(it.get("forecast_ctn", 0))
-            cursor.execute("""
-                INSERT INTO sales_forecast (sku_id, month_year, forecast_ctn, created_by, updated_at)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(sku_id, month_year) DO UPDATE SET
-                    forecast_ctn = excluded.forecast_ctn,
-                    created_by = excluded.created_by,
-                    updated_at = CURRENT_TIMESTAMP
-            """, (sku_id, month, val, CURRENT_SESSION.get("name", "System Admin")))
+            val = float(it.get("forecast_ctn", 0.0))
+            w1 = float(it.get("week1_ctn", 0.0) or round(val * 0.25, 1))
+            w2 = float(it.get("week2_ctn", 0.0) or round(val * 0.25, 1))
+            w3 = float(it.get("week3_ctn", 0.0) or round(val * 0.25, 1))
+            w4 = float(it.get("week4_ctn", 0.0) or max(0.0, round(val - (w1 + w2 + w3), 1)))
+
+            # Check existing forecast
+            existing = cursor.execute("SELECT forecast_ctn, original_forecast_ctn, revision_no FROM sales_forecast WHERE sku_id = ? AND month_year = ?", (sku_id, month)).fetchone()
+            
+            if existing:
+                prev_val = float(existing["forecast_ctn"] or 0.0)
+                orig_val = float(existing["original_forecast_ctn"] or prev_val)
+                rev_no = int(existing["revision_no"] or 0)
+                
+                # If value changed or explicitly marked as revision
+                if abs(val - prev_val) > 0.001 or is_revision:
+                    new_rev_no = rev_no + 1
+                    var_val = round(val - prev_val, 2)
+                    
+                    # Log revision history
+                    cursor.execute("""
+                        INSERT INTO sales_forecast_revisions (sku_id, month_year, revision_no, revised_date, previous_ctn, revised_ctn, variance_ctn, reason, revised_by)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (sku_id, month, new_rev_no, revision_date, prev_val, val, var_val, revision_reason, CURRENT_SESSION.get("name", "Sales Team")))
+                    
+                    cursor.execute("""
+                        UPDATE sales_forecast 
+                        SET forecast_ctn = ?, revision_no = ?, revised_date = ?, revision_notes = ?,
+                            week1_ctn = ?, week2_ctn = ?, week3_ctn = ?, week4_ctn = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE sku_id = ? AND month_year = ?
+                    """, (val, new_rev_no, revision_date, revision_reason, w1, w2, w3, w4, sku_id, month))
+                else:
+                    cursor.execute("""
+                        UPDATE sales_forecast 
+                        SET week1_ctn = ?, week2_ctn = ?, week3_ctn = ?, week4_ctn = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE sku_id = ? AND month_year = ?
+                    """, (w1, w2, w3, w4, sku_id, month))
+            else:
+                # First time entry -> Rev 0
+                cursor.execute("""
+                    INSERT INTO sales_forecast (sku_id, month_year, forecast_ctn, original_forecast_ctn, revision_no, revised_date, revision_notes, week1_ctn, week2_ctn, week3_ctn, week4_ctn, created_by, updated_at)
+                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, (sku_id, month, val, val, revision_date, revision_reason, w1, w2, w3, w4, CURRENT_SESSION.get("name", "Sales Team")))
+            
+            updated_count += 1
+            
         conn.commit()
         conn.close()
-        return jsonify({"success": True, "count": len(items)})
+        return jsonify({"success": True, "count": updated_count, "revision_date": revision_date})
     except Exception as e:
         conn.close()
         return jsonify({"error": str(e)}), 400
+
+@app.route("/api/forecast/revisions", methods=["GET"])
+def get_forecast_revisions():
+    month = request.args.get("month", "2026-07")
+    sku_id = request.args.get("sku_id")
+    conn = get_db()
+    sql = """
+        SELECT r.*, s.sku_code, s.name AS sku_name, s.category
+        FROM sales_forecast_revisions r
+        JOIN skus s ON r.sku_id = s.id
+        WHERE r.month_year = ?
+    """
+    params = [month]
+    if sku_id:
+        sql += " AND r.sku_id = ?"
+        params.append(sku_id)
+    sql += " ORDER BY r.id DESC"
+    rows = conn.execute(sql, params).fetchall()
+    rev_list = rows_to_dict(rows)
+    return jsonify({"revisions": rev_list, "count": len(rev_list)})
 
 # Download Blank Forecast Template
 @app.route("/api/forecast/template", methods=["GET"])
@@ -1291,6 +1482,123 @@ def suggest_production_plan():
         
     return jsonify({"month": month, "suggestions": suggestions})
 
+@app.route("/api/production/realign-from-forecast", methods=["POST"])
+def realign_production_from_forecast():
+    """
+    Automatically adjusts monthly & daily production plans after a sales forecast revision.
+    Recalculates net deficit and adjusts upcoming daily plans or creates needed daily batches.
+    """
+    allowed, err_resp, err_code = check_role_permission(["Production"], "re-align production plans with revised forecast")
+    if not allowed:
+        return err_resp, err_code
+        
+    data = request.json or {}
+    month = data.get("month", "2026-07")
+    cat = data.get("category", "05")
+    effective_date = data.get("effective_date", datetime.now().strftime("%Y-%m-%d"))
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        # Fetch active SKUs with latest revised forecast vs current planned quantity
+        sql = """
+            SELECT s.id, s.sku_code, s.name, s.category_code, s.ctn_size,
+                   COALESCE(sf.forecast_ctn, 0.0) AS forecast_ctn,
+                   COALESCE(sf.original_forecast_ctn, sf.forecast_ctn, 0.0) AS original_forecast_ctn,
+                   COALESCE(sf.revision_no, 0) AS revision_no,
+                   COALESCE(SUM(pp.planned_ctn), 0.0) AS total_planned_ctn,
+                   COALESCE(SUM(pp.actual_produced_ctn), 0.0) AS total_produced_ctn
+            FROM skus s
+            LEFT JOIN sales_forecast sf ON s.id = sf.sku_id AND sf.month_year = ?
+            LEFT JOIN production_plans pp ON s.id = pp.sku_id AND pp.month_year = ?
+            WHERE s.status = 'Active'
+        """
+        params = [month, month]
+        if cat and cat != 'ALL':
+            sql += " AND s.category_code = ?"
+            params.append(cat)
+        sql += " GROUP BY s.id"
+        
+        skus = cursor.execute(sql, params).fetchall()
+        realigned_items = []
+        
+        for sku in skus:
+            forecast_target = float(sku["forecast_ctn"] or 0.0)
+            total_planned = float(sku["total_planned_ctn"] or 0.0)
+            diff = round(forecast_target - total_planned, 2)
+            
+            # If there is a discrepancy between revised forecast and current total planned
+            if abs(diff) >= 1.0 and forecast_target > 0:
+                # Find future/planned daily plans on or after effective_date
+                future_plans = cursor.execute("""
+                    SELECT id, plan_no, plan_date, planned_ctn, status 
+                    FROM production_plans 
+                    WHERE sku_id = ? AND month_year = ? AND plan_date >= ? AND status = 'Planned'
+                    ORDER BY plan_date ASC
+                """, (sku["id"], month, effective_date)).fetchall()
+                
+                if future_plans:
+                    # Distribute adjustment across future plans
+                    adj_per_plan = round(diff / len(future_plans), 1)
+                    for fp in future_plans:
+                        new_ctn = max(10.0, round(float(fp["planned_ctn"]) + adj_per_plan, 1))
+                        new_pcs = new_ctn * sku["ctn_size"]
+                        cursor.execute("""
+                            UPDATE production_plans 
+                            SET planned_ctn = ?, planned_pcs = ?, notes = notes || ' [Auto-adjusted for Rev Forecast]'
+                            WHERE id = ?
+                        """, (new_ctn, new_pcs, fp["id"]))
+                        
+                        # Update Requisition
+                        req = cursor.execute("SELECT id FROM material_requisitions WHERE plan_id = ?", (fp["id"],)).fetchone()
+                        if req:
+                            bom_rows = cursor.execute("SELECT material_id, rate_per_ctn FROM bom WHERE sku_id = ?", (sku["id"],)).fetchall()
+                            for b in bom_rows:
+                                req_qty = round(new_ctn * b["rate_per_ctn"], 2)
+                                cursor.execute("UPDATE requisition_items SET required_qty = ? WHERE requisition_id = ? AND material_id = ?", (req_qty, req["id"], b["material_id"]))
+                else:
+                    # Create a new daily plan for effective_date or month end
+                    max_id = int(cursor.execute("SELECT MAX(id) FROM production_plans").fetchone()[0] or 0)
+                    plan_no = f"PP-{sku['category_code']}-{month.replace('-', '')}-{max_id + 1:03d}"
+                    planned_ctn = max(10.0, diff)
+                    planned_pcs = planned_ctn * sku["ctn_size"]
+                    plan_date = max(effective_date, f"{month}-15")
+                    
+                    cursor.execute("""
+                        INSERT INTO production_plans (category_code, plan_no, month_year, plan_date, sku_id, planned_ctn, planned_pcs, opening_stock_ctn, opening_stock_pcs, actual_produced_ctn, actual_produced_pcs, status, created_by, notes)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0.0, 0.0, 0.0, 'Planned', ?, 'Auto-adjusted daily plan for revised sales forecast')
+                    """, (sku["category_code"], plan_no, month, plan_date, sku["id"], planned_ctn, planned_pcs, CURRENT_SESSION.get("name", "System Admin")))
+                    plan_id = int(cursor.lastrowid or (max_id + 1))
+                    
+                    req_no = f"MR-{sku['category_code']}-{month.replace('-', '')}-{plan_id:03d}"
+                    cursor.execute("""
+                        INSERT INTO material_requisitions (category_code, req_no, plan_id, month_year, req_date, status, requested_by, remarks)
+                        VALUES (?, ?, ?, ?, ?, 'Pending', ?, 'Auto-requisition for revised sales forecast plan')
+                    """, (sku["category_code"], req_no, plan_id, month, plan_date, CURRENT_SESSION.get("name", "System Admin")))
+                    req_id = cursor.lastrowid
+                    
+                    bom_rows = cursor.execute("SELECT material_id, rate_per_ctn, unit FROM bom WHERE sku_id = ?", (sku["id"],)).fetchall()
+                    for b in bom_rows:
+                        cursor.execute("""
+                            INSERT INTO requisition_items (requisition_id, material_id, required_qty, issued_qty, unit, status)
+                            VALUES (?, ?, ?, 0.0, ?, 'Pending')
+                        """, (req_id, b["material_id"], round(planned_ctn * b["rate_per_ctn"], 2), b["unit"]))
+                
+                realigned_items.append({
+                    "sku_code": sku["sku_code"],
+                    "sku_name": sku["name"],
+                    "forecast_target": forecast_target,
+                    "previous_planned": total_planned,
+                    "adjustment_applied": diff
+                })
+        
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True, "realigned_count": len(realigned_items), "items": realigned_items})
+    except Exception as e:
+        conn.close()
+        return jsonify({"error": str(e)}), 400
+
 # ----------------- PRODUCTION PLANNING -----------------
 @app.route("/api/production/plans", methods=["GET"])
 def get_production_plans():
@@ -1355,14 +1663,14 @@ def create_production_plan():
         planned_pcs = planned_ctn * sku["ctn_size"]
         opening_stock_pcs = opening_stock_ctn * sku["ctn_size"]
         
-        max_id = cursor.execute("SELECT MAX(id) FROM production_plans").fetchone()[0] or 0
+        max_id = int(cursor.execute("SELECT MAX(id) FROM production_plans").fetchone()[0] or 0)
         plan_no = f"PP-{cat_code}-{month_year.replace('-', '')}-{max_id + 1:03d}"
         
         cursor.execute("""
             INSERT INTO production_plans (category_code, plan_no, month_year, plan_date, sku_id, planned_ctn, planned_pcs, opening_stock_ctn, opening_stock_pcs, actual_produced_ctn, actual_produced_pcs, status, created_by, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, 0.0, 'Planned', ?, ?)
         """, (cat_code, plan_no, month_year, plan_date, sku_id, planned_ctn, planned_pcs, opening_stock_ctn, opening_stock_pcs, CURRENT_SESSION.get("name", "System Admin"), notes))
-        plan_id = cursor.lastrowid
+        plan_id = int(cursor.lastrowid or (max_id + 1))
         
         if data.get("auto_create_requisition", True):
             req_no = f"MR-{cat_code}-{month_year.replace('-', '')}-{plan_id:03d}"
@@ -1384,6 +1692,8 @@ def create_production_plan():
         conn.close()
         return jsonify({"success": True, "plan_id": plan_id, "plan_no": plan_no})
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         conn.close()
         return jsonify({"error": str(e)}), 400
 
@@ -1397,18 +1707,37 @@ def update_production_output(plan_id):
     status = data.get("status", "Completed")
     
     conn = get_db()
+    cursor = conn.cursor()
     try:
-        p = conn.execute("SELECT p.sku_id, s.ctn_size FROM production_plans p JOIN skus s ON p.sku_id = s.id WHERE p.id = ?", (plan_id,)).fetchone()
+        p = cursor.execute("SELECT p.sku_id, p.actual_produced_ctn, s.ctn_size FROM production_plans p JOIN skus s ON p.sku_id = s.id WHERE p.id = ?", (plan_id,)).fetchone()
+        if not p:
+            conn.close()
+            return jsonify({"error": "Plan not found"}), 404
+
+        old_produced = float(p["actual_produced_ctn"] or 0.0)
+        delta_ctn = produced_ctn - old_produced
         produced_pcs = produced_ctn * (p["ctn_size"] if p else 12)
         
-        conn.execute("""
+        cursor.execute("""
             UPDATE production_plans 
             SET actual_produced_ctn = ?, actual_produced_pcs = ?, status = ?
             WHERE id = ?
         """, (produced_ctn, produced_pcs, status, plan_id))
+
+        # Consume raw materials & packaging materials from floor stock based on BOM
+        if delta_ctn > 0:
+            bom_rows = cursor.execute("SELECT material_id, rate_per_ctn FROM bom WHERE sku_id = ?", (p["sku_id"],)).fetchall()
+            for b in bom_rows:
+                consumed_qty = round(delta_ctn * b["rate_per_ctn"], 4)
+                cursor.execute("""
+                    UPDATE materials 
+                    SET floor_stock = MAX(0.0, ROUND(COALESCE(floor_stock, 0.0) - ?, 4))
+                    WHERE id = ?
+                """, (consumed_qty, b["material_id"]))
+
         conn.commit()
         conn.close()
-        return jsonify({"success": True})
+        return jsonify({"success": True, "produced_ctn": produced_ctn, "delta_consumed_ctn": max(0.0, delta_ctn)})
     except Exception as e:
         conn.close()
         return jsonify({"error": str(e)}), 400
@@ -1561,7 +1890,7 @@ def create_mrr_entry():
         new_stock = mat["current_stock"] + received_qty
         tot_amount = round(received_qty * unit_price, 2)
         
-        max_id = cursor.execute("SELECT MAX(id) FROM mrr_entries").fetchone()[0] or 0
+        max_id = int(cursor.execute("SELECT MAX(id) FROM mrr_entries").fetchone()[0] or 0)
         mrr_no = f"MRR-{cat_code}-{datetime.now().strftime('%Y%m')}-{max_id + 1:03d}"
         
         cursor.execute("""
@@ -1957,7 +2286,7 @@ def bulk_upload_mrr():
             vehicle = str(ws.cell(r_idx, 9).value or "").strip()
             remarks = str(ws.cell(r_idx, 10).value or "Bulk Excel Inward").strip()
             
-            max_id = cursor.execute("SELECT COALESCE(MAX(id), 0) FROM mrr_entries").fetchone()[0]
+            max_id = int(cursor.execute("SELECT COALESCE(MAX(id), 0) FROM mrr_entries").fetchone()[0] or 0)
             mrr_no = f"MRR-{cat_code}-{datetime.now().strftime('%Y%m')}-{max_id + 1:03d}"
             total_amt = round(qty * price, 2)
             new_stock = round(mat["current_stock"] + qty, 2)
@@ -2085,10 +2414,11 @@ def issue_requisition_materials(req_id):
                 continue
                 
             m_id = ri["material_id"]
-            cursor.execute("SELECT current_stock FROM materials WHERE id = ?", (m_id,))
+            cursor.execute("SELECT current_stock, floor_stock FROM materials WHERE id = ?", (m_id,))
             mat = cursor.fetchone()
             new_stk = max(0.0, mat["current_stock"] - issue_qty)
-            cursor.execute("UPDATE materials SET current_stock = ? WHERE id = ?", (new_stk, m_id))
+            new_floor = round(float(mat["floor_stock"] or 0.0) + issue_qty, 4)
+            cursor.execute("UPDATE materials SET current_stock = ?, floor_stock = ? WHERE id = ?", (new_stk, new_floor, m_id))
             
             tot_issued = ri["issued_qty"] + issue_qty
             status = 'Issued' if tot_issued >= ri["required_qty"] else 'Partially Issued'
@@ -2230,7 +2560,7 @@ def raise_purchase_requisition():
         lead_time = int(data.get("lead_time_days") or mat["lead_time_days"])
         total_val = round(req_qty * unit_price, 2)
         
-        max_id = cursor.execute("SELECT MAX(id) FROM purchase_requisitions").fetchone()[0] or 0
+        max_id = int(cursor.execute("SELECT MAX(id) FROM purchase_requisitions").fetchone()[0] or 0)
         po_no = f"PR-{cat_code}-{month_year.replace('-', '')}-{max_id + 1:03d}"
         
         cursor.execute("""
@@ -2267,7 +2597,7 @@ def auto_generate_purchase_requisitions():
             
         critical_mats = cursor.execute(sql, params).fetchall()
         created_count = 0
-        max_id = cursor.execute("SELECT MAX(id) FROM purchase_requisitions").fetchone()[0] or 0
+        max_id = int(cursor.execute("SELECT MAX(id) FROM purchase_requisitions").fetchone()[0] or 0)
         
         for mat in critical_mats:
             max_id += 1
@@ -2352,31 +2682,66 @@ def report_forecast_vs_production():
     month = request.args.get("month", "2026-07")
     cat = request.args.get("category", "").strip()
     uom = request.args.get("uom", "Packet")
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    plan_date = request.args.get("plan_date", "").strip()
     
     conn = get_db()
     sql = """
         SELECT s.id AS sku_id, s.category_code, s.sku_code, s.name AS sku_name, s.category, s.ctn_size, s.uom_default,
-               COALESCE(sf.forecast_ctn, 0) AS forecast_ctn,
-               COALESCE(SUM(pp.planned_ctn), 0) AS planned_ctn,
-               COALESCE(SUM(pp.actual_produced_ctn), 0) AS actual_produced_ctn,
-               (COALESCE(SUM(pp.actual_produced_ctn), 0) - COALESCE(sf.forecast_ctn, 0)) AS variance_forecast,
-               ROUND(CASE WHEN COALESCE(sf.forecast_ctn, 0) > 0 
-                          THEN (COALESCE(SUM(pp.actual_produced_ctn), 0) / sf.forecast_ctn * 100) 
+               COALESCE(sf.original_forecast_ctn, sf.forecast_ctn, 0.0) AS original_forecast_ctn,
+               COALESCE(sf.forecast_ctn, 0.0) AS forecast_ctn,
+               COALESCE(sf.revision_no, 0) AS revision_no,
+               sf.revised_date,
+               sf.revision_notes,
+               COALESCE(SUM(pp.planned_ctn), 0.0) AS planned_ctn,
+               COALESCE(SUM(pp.actual_produced_ctn), 0.0) AS actual_produced_ctn,
+               (COALESCE(SUM(pp.actual_produced_ctn), 0.0) - COALESCE(sf.forecast_ctn, 0.0)) AS variance_forecast,
+               ROUND(CASE WHEN COALESCE(sf.forecast_ctn, 0.0) > 0 
+                          THEN (COALESCE(SUM(pp.actual_produced_ctn), 0.0) / sf.forecast_ctn * 100) 
                           ELSE 0 END, 1) AS forecast_achievement_pct
         FROM skus s
         LEFT JOIN sales_forecast sf ON s.id = sf.sku_id AND sf.month_year = ?
-        LEFT JOIN production_plans pp ON s.id = pp.sku_id AND pp.month_year = ?
-        WHERE s.status = 'Active'
+        LEFT JOIN production_plans pp ON s.id = pp.sku_id
     """
-    params = [month, month]
-    if cat and cat != 'ALL':
+    params = [month]
+
+    # Dynamic date filtering for production plans
+    if plan_date:
+        sql += " AND pp.plan_date = ?"
+        params.append(plan_date)
+    elif date_from and date_to:
+        sql += " AND pp.plan_date >= ? AND pp.plan_date <= ?"
+        params.extend([date_from, date_to])
+    else:
+        sql += " AND pp.month_year = ?"
+        params.append(month)
+
+    sql += " WHERE s.status = 'Active'"
+    if cat and cat not in ('ALL', 'undefined', 'null', ''):
         sql += " AND s.category_code = ?"
         params.append(cat)
+        
     sql += " GROUP BY s.id ORDER BY forecast_ctn DESC, planned_ctn DESC"
     
     rows = conn.execute(sql, params).fetchall()
+
+    months = conn.execute("SELECT DISTINCT month_year FROM sales_forecast ORDER BY month_year ASC").fetchall()
+    month_list = [r["month_year"] for r in months]
+    if not month_list:
+        month_list = ["2026-07", "2026-08", "2026-09", "2026-10", "2026-11", "2026-12",
+                      "2027-01", "2027-02", "2027-03", "2027-04", "2027-05", "2027-06"]
+
     conn.close()
-    return jsonify({"month": month, "uom": uom, "items": rows_to_dict(rows)})
+    return jsonify({
+        "month": month,
+        "uom": uom,
+        "date_from": date_from,
+        "date_to": date_to,
+        "plan_date": plan_date,
+        "available_months": month_list,
+        "items": rows_to_dict(rows)
+    })
 
 @app.route("/api/reports/stock-summary", methods=["GET"])
 def report_stock_summary():
@@ -2614,7 +2979,7 @@ def bulk_upload_production_plans():
             cat_code = sku["category_code"]
             
             # Generate unique plan number
-            max_id = cursor.execute("SELECT MAX(id) FROM production_plans").fetchone()[0] or 0
+            max_id = int(cursor.execute("SELECT MAX(id) FROM production_plans").fetchone()[0] or 0)
             plan_no = f"PP-{cat_code}-{month.replace('-', '')}-{max_id + 1:03d}"
             planned_pcs = ctns * sku["ctn_size"]
             
@@ -2622,10 +2987,10 @@ def bulk_upload_production_plans():
                 INSERT INTO production_plans (category_code, plan_no, month_year, plan_date, sku_id, planned_ctn, planned_pcs, created_by, notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (cat_code, plan_no, month, plan_date, sku["id"], ctns, planned_pcs, CURRENT_SESSION.get("name", "Bulk Import"), notes))
-            plan_id = cursor.lastrowid
+            plan_id = int(cursor.lastrowid or (max_id + 1))
             
             # Auto-generate Requisition
-            req_no = f"MR-{cat_code}-{month.replace('-', '')}-{max_id + 1:03d}"
+            req_no = f"MR-{cat_code}-{month.replace('-', '')}-{plan_id:03d}"
             cursor.execute("""
                 INSERT INTO material_requisitions (category_code, req_no, plan_id, month_year, req_date, requested_by, notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -2651,7 +3016,7 @@ def bulk_upload_production_plans():
 # ----------------- SUPER ADMIN DATA CLEAR & RESET -----------------
 @app.route("/api/admin/clear-data", methods=["POST"])
 def admin_clear_data():
-    if CURRENT_SESSION.get("role") != "Super Admin":
+    if get_current_session().get("role") not in ("Super Admin", "Admin"):
         return jsonify({"error": "Unauthorized: Only Super Admin can perform data clearing"}), 403
         
     data = request.json or {}

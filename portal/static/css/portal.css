@@ -1380,7 +1380,26 @@ body {
   gap: 0.25rem;
 }
 
-/* Data Clear / Reset Danger Zone */
+/* Data Clear / Reset Danger Zone & Admin-Only Security Rules */
+.admin-only,
+.danger-zone-card {
+  display: none !important;
+}
+
+body.is-super-admin .admin-only,
+body.is-super-admin .danger-zone-card {
+  display: block !important;
+}
+
+body.is-super-admin a.nav-item.admin-only {
+  display: flex !important;
+}
+
+body.is-super-admin span.admin-only,
+body.is-super-admin button.admin-only {
+  display: inline-flex !important;
+}
+
 .danger-zone-card {
   border: 1px solid rgba(239, 68, 68, 0.4);
   background: rgba(239, 68, 68, 0.04);
