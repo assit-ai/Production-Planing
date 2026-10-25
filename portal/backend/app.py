@@ -261,7 +261,8 @@ def switch_role():
 
 @app.route("/api/users", methods=["GET"])
 def get_all_users():
-    if CURRENT_SESSION.get("role") not in ("Super Admin", "Admin"):
+    session = get_current_session()
+    if session.get("role") not in ("Super Admin", "Admin"):
         return jsonify({"error": "Access Denied: Only Super Admin can view or manage users."}), 403
     conn = get_db()
     users = conn.execute("SELECT id, username, name, role, department, allowed_category, password, is_active, created_at, must_change_password FROM users ORDER BY id ASC").fetchall()
@@ -270,7 +271,8 @@ def get_all_users():
 
 @app.route("/api/users", methods=["POST"])
 def create_user():
-    if CURRENT_SESSION.get("role") not in ("Super Admin", "Admin"):
+    session = get_current_session()
+    if session.get("role") not in ("Super Admin", "Admin"):
         return jsonify({"error": "Access Denied: Only Super Admin can create users."}), 403
     data = request.json or {}
     username = data.get("username", "").strip()
@@ -298,7 +300,8 @@ def create_user():
 
 @app.route("/api/users/<int:user_id>", methods=["PUT"])
 def update_user(user_id):
-    if CURRENT_SESSION.get("role") not in ("Super Admin", "Admin"):
+    session = get_current_session()
+    if session.get("role") not in ("Super Admin", "Admin"):
         return jsonify({"error": "Access Denied: Only Super Admin can update users."}), 403
     data = request.json or {}
     conn = get_db()
@@ -322,7 +325,8 @@ def update_user(user_id):
 
 @app.route("/api/users/<int:user_id>", methods=["DELETE"])
 def delete_user(user_id):
-    if CURRENT_SESSION.get("role") not in ("Super Admin", "Admin"):
+    session = get_current_session()
+    if session.get("role") not in ("Super Admin", "Admin"):
         return jsonify({"error": "Access Denied: Only Super Admin can delete users."}), 403
     if user_id == 1:
         return jsonify({"error": "Cannot delete primary Super Admin"}), 400
@@ -1271,29 +1275,48 @@ def save_forecast():
     month = data.get("month", "2026-07")
     items = data.get("items", []) # [{sku_id, forecast_ctn, week1_ctn, week2_ctn, week3_ctn, week4_ctn}]
     revision_date = data.get("revision_date", datetime.now().strftime("%Y-%m-%d"))
-    revision_reason = data.get("revision_reason", "Monthly Forecast Update")
+    revision_reason = data.get("revision_reason") or data.get("revision_notes") or "Monthly Forecast Update"
     is_revision = data.get("is_revision", False)
+    
+    session = get_current_session()
+    user_name = session.get("name") or data.get("revised_by") or "Sales Team"
     
     conn = get_db()
     cursor = conn.cursor()
     try:
+        # Pre-fetch all existing forecasts for the month in 1 query to avoid N roundtrips
+        existing_rows = cursor.execute("""
+            SELECT sku_id, forecast_ctn, original_forecast_ctn, revision_no, week1_ctn, week2_ctn, week3_ctn, week4_ctn 
+            FROM sales_forecast WHERE month_year = ?
+        """, (month,)).fetchall()
+        existing_map = {int(r["sku_id"]): r for r in existing_rows}
+
         updated_count = 0
         for it in items:
-            sku_id = it.get("sku_id")
+            sku_id = int(it.get("sku_id") or 0)
+            if not sku_id:
+                continue
             val = float(it.get("forecast_ctn", 0.0))
             w1 = float(it.get("week1_ctn", 0.0) or round(val * 0.25, 1))
             w2 = float(it.get("week2_ctn", 0.0) or round(val * 0.25, 1))
             w3 = float(it.get("week3_ctn", 0.0) or round(val * 0.25, 1))
             w4 = float(it.get("week4_ctn", 0.0) or max(0.0, round(val - (w1 + w2 + w3), 1)))
 
-            # Check existing forecast
-            existing = cursor.execute("SELECT forecast_ctn, original_forecast_ctn, revision_no FROM sales_forecast WHERE sku_id = ? AND month_year = ?", (sku_id, month)).fetchone()
+            existing = existing_map.get(sku_id)
             
             if existing:
                 prev_val = float(existing["forecast_ctn"] or 0.0)
                 orig_val = float(existing["original_forecast_ctn"] or prev_val)
                 rev_no = int(existing["revision_no"] or 0)
-                
+                prev_w1 = float(existing["week1_ctn"] or 0.0)
+                prev_w2 = float(existing["week2_ctn"] or 0.0)
+                prev_w3 = float(existing["week3_ctn"] or 0.0)
+                prev_w4 = float(existing["week4_ctn"] or 0.0)
+
+                # Skip if totally identical
+                if abs(val - prev_val) < 0.001 and abs(w1 - prev_w1) < 0.001 and abs(w2 - prev_w2) < 0.001 and abs(w3 - prev_w3) < 0.001 and abs(w4 - prev_w4) < 0.001 and not is_revision:
+                    continue
+
                 # If value changed or explicitly marked as revision
                 if abs(val - prev_val) > 0.001 or is_revision:
                     new_rev_no = rev_no + 1
@@ -1303,7 +1326,7 @@ def save_forecast():
                     cursor.execute("""
                         INSERT INTO sales_forecast_revisions (sku_id, month_year, revision_no, revised_date, previous_ctn, revised_ctn, variance_ctn, reason, revised_by)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (sku_id, month, new_rev_no, revision_date, prev_val, val, var_val, revision_reason, CURRENT_SESSION.get("name", "Sales Team")))
+                    """, (sku_id, month, new_rev_no, revision_date, prev_val, val, var_val, revision_reason, user_name))
                     
                     cursor.execute("""
                         UPDATE sales_forecast 
@@ -1323,13 +1346,19 @@ def save_forecast():
                 cursor.execute("""
                     INSERT INTO sales_forecast (sku_id, month_year, forecast_ctn, original_forecast_ctn, revision_no, revised_date, revision_notes, week1_ctn, week2_ctn, week3_ctn, week4_ctn, created_by, updated_at)
                     VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (sku_id, month, val, val, revision_date, revision_reason, w1, w2, w3, w4, CURRENT_SESSION.get("name", "Sales Team")))
+                """, (sku_id, month, val, val, revision_date, revision_reason, w1, w2, w3, w4, user_name))
             
             updated_count += 1
             
         conn.commit()
         conn.close()
-        return jsonify({"success": True, "count": updated_count, "revision_date": revision_date})
+        return jsonify({
+            "success": True, 
+            "count": updated_count, 
+            "items_updated": updated_count,
+            "revision_date": revision_date,
+            "message": f"Successfully saved forecast ({updated_count} SKUs adjusted)"
+        })
     except Exception as e:
         conn.close()
         return jsonify({"error": str(e)}), 400

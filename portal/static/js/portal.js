@@ -1077,6 +1077,13 @@ async function saveForecastChanges() {
     }
   }
 
+  const saveBtn = document.querySelector('[onclick="saveForecastChanges()"]');
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving to Cloud...';
+  }
+  showToast('Saving forecast changes & calculating weekly allocations...', 'info');
+
   try {
     const res = await fetch('/api/forecast', {
       method: 'POST',
@@ -1090,21 +1097,24 @@ async function saveForecastChanges() {
     });
     const data = await res.json();
     if (data.success) {
-      showToast(`Saved forecast for ${data.count} SKUs! (Revisions logged)`, 'success');
+      const countMsg = data.items_updated || data.count || items.length;
+      showToast(`✓ Sales forecast successfully saved (${countMsg} SKUs)!`, 'success');
       loadForecastView();
       loadDashboard();
 
       if (hasChanges) {
-        setTimeout(() => {
-          const syncProd = confirm('Sales forecast was revised. Do you want to auto-align upcoming daily production plans and store material requisitions with this new forecast?');
-          if (syncProd) {
-            triggerRealignProduction();
-          }
-        }, 600);
+        showToast('Tip: Go to Production Plans and click "Auto-Align Plans" to sync future daily targets with this revised forecast.', 'info');
       }
+    } else {
+      showToast(data.error || 'Failed to save sales forecast', 'danger');
     }
   } catch (e) {
-    showToast('Failed to save sales forecast', 'danger');
+    showToast('Failed to save sales forecast. Please check network connection.', 'danger');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = '<i class="fas fa-save"></i> Save Forecast Changes';
+    }
   }
 }
 
@@ -1126,12 +1136,13 @@ async function openForecastRevisionsModal(skuId, skuName) {
     const data = await res.json();
     if (!tbody) return;
 
-    if (!data.revisions || data.revisions.length === 0) {
+    const revList = Array.isArray(data) ? data : (data.revisions || []);
+    if (revList.length === 0) {
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:1.5rem;">No revisions found. The base initial forecast is currently active.</td></tr>';
       return;
     }
 
-    tbody.innerHTML = data.revisions.map(r => {
+    tbody.innerHTML = revList.map(r => {
       const varVal = r.variance_ctn || (r.revised_ctn - r.previous_ctn);
       return `
         <tr>
@@ -1154,26 +1165,20 @@ async function openForecastRevisionsModal(skuId, skuName) {
 
 async function triggerRealignProduction() {
   const month = document.getElementById('prod-month-select')?.value || AppState.selectedMonth;
-  const effDateInp = document.getElementById('realign-effective-date');
-  let effDate = effDateInp ? effDateInp.value : '';
-  if (!effDate) {
-    effDate = new Date().toISOString().split('T')[0];
-    if (effDateInp) effDateInp.value = effDate;
-  }
-
-  const ok = confirm(`Re-align daily production plans for ${month} starting from ${effDate} based on latest revised sales forecast? Existing daily targets and material requisitions will be re-calculated.`);
-  if (!ok) return;
+  const today = new Date().toISOString().split('T')[0];
+  const effDate = prompt(`Enter effective date from which to re-align daily production plans with the revised forecast (YYYY-MM-DD):`, today);
+  if (!effDate) return;
 
   try {
     showToast('Re-aligning production plans with revised forecast...', 'info');
     const res = await fetch('/api/production/realign-from-forecast', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ month, effective_date: effDate })
+      body: JSON.stringify({ month, effective_date: effDate.trim() })
     });
     const data = await res.json();
     if (data.success) {
-      showToast(`Successfully re-aligned ${data.plans_adjusted} daily plans & ${data.requisitions_adjusted} requisitions!`, 'success');
+      showToast(`✓ Successfully re-aligned ${data.plans_adjusted || data.realigned_count || 0} daily plans & store requisitions!`, 'success');
       loadProductionView();
     } else {
       showToast(data.error || 'Failed to re-align production plans', 'danger');
@@ -2092,15 +2097,16 @@ async function loadAdminMaterials() {
 
 // User Management (RBAC)
 async function loadAdminUsers() {
-  if (AppState.currentUser?.role !== 'Super Admin') {
+  if (!isSuperAdminUser()) {
+    showToast('Only Super Admin can access User Management', 'warning');
     switchView('dashboard');
     return;
   }
   try {
     const res = await fetch('/api/users');
     if (!res.ok) {
-      showToast('Access denied to user management', 'warning');
-      switchView('dashboard');
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || 'Access denied to user management', 'warning');
       return;
     }
     const users = await res.json();
