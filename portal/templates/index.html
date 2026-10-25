@@ -1063,154 +1063,201 @@
 
       <!-- ================= 7. REPORTS & ANALYTICS VIEW ================= -->
       <section id="view-reports" class="view-section">
-        <div class="action-bar">
-          <div>
-            <h2 style="font-size:1.1rem; font-weight:700;">Executive Performance & Inventory Reports</h2>
-            <p style="font-size:0.75rem; color:var(--text-muted);">Forecast variance, RM-PM stock health, and Fast/Slow/Non-moving (FSN) analysis.</p>
-          </div>
-          <div style="display:flex; gap:0.5rem;">
-            <button class="btn btn-primary" onclick="downloadSectionExcel()">
-              <i class="fas fa-file-excel"></i> Export to Excel (.xlsx)
+        <!-- Sleek Compact Top Bar with Sub-Navigation Tabs & Actions -->
+        <div class="reports-top-bar" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.75rem; padding-bottom:0.6rem; border-bottom:2px solid var(--card-border);">
+          <!-- Sub-Tab Navigation -->
+          <div class="reports-sub-nav" style="display:flex; gap:0.4rem; align-items:center;">
+            <button type="button" class="sub-tab-link active" id="tab-btn-forecast-prod" onclick="switchReportSubTab('forecast_prod')">
+              <i class="fas fa-balance-scale"></i> Forecast vs Production Report
             </button>
-            <button class="btn btn-outline" onclick="printPDFReport()">
-              <i class="fas fa-print"></i> Print / Download PDF
+            <button type="button" class="sub-tab-link" id="tab-btn-stock-fsn" onclick="switchReportSubTab('stock_fsn')">
+              <i class="fas fa-boxes"></i> RM & PM Stock Summary & FSN Status
             </button>
           </div>
-        </div>
 
-        <!-- Forecast vs Production Multi-Date/Month Filter Bar -->
-        <div class="card" style="margin-bottom:1rem; padding:1rem; background:var(--bg-secondary); border:1px solid var(--border-color);">
-          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:0.75rem;">
-            <div style="font-weight:700; font-size:0.95rem; color:var(--text-main); display:flex; align-items:center; gap:0.5rem;">
-              <i class="fas fa-filter" style="color:var(--primary);"></i>
-              Report Filters (তারিখ ও মাস অনুযায়ী ফিল্টার করুন)
-            </div>
-            <div class="date-dropdown-mode-tabs" style="display:flex; gap:0.25rem;">
-              <button type="button" class="date-mode-btn active" id="report-mode-month-btn" onclick="setReportDateFilterMode('month')">Full Month</button>
-              <button type="button" class="date-mode-btn" id="report-mode-single-btn" onclick="setReportDateFilterMode('single')">Single Date (নির্দিষ্ট দিন)</button>
-              <button type="button" class="date-mode-btn" id="report-mode-range-btn" onclick="setReportDateFilterMode('range')">Date Range (পরিসর)</button>
-            </div>
-          </div>
-
-          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.75rem; align-items:end;">
-            <!-- Month Selector -->
-            <div id="report-filter-month-container">
-              <label class="form-label" style="font-size:0.75rem; font-weight:600; margin-bottom:3px;">Select Month:</label>
-              <select class="form-control form-control-sm" id="report-month-select" onchange="if(AppState.reportFilterMode === 'month') loadForecastVsProdReport();">
-                <option value="2026-07" selected>📅 2026-07 (July 2026)</option>
-                <option value="2026-08">📅 2026-08 (August 2026)</option>
-                <option value="2026-06">📅 2026-06 (June 2026)</option>
-              </select>
-            </div>
-
-            <!-- Single Date Selector -->
-            <div id="report-filter-single-container" style="display:none;">
-              <label class="form-label" style="font-size:0.75rem; font-weight:600; margin-bottom:3px;">Specific Date (নির্দিষ্ট দিন):</label>
-              <input type="date" class="form-control form-control-sm" id="report-single-date" value="2026-07-24">
-            </div>
-
-            <!-- Date Range From/To -->
-            <div id="report-filter-range-from-container" style="display:none;">
-              <label class="form-label" style="font-size:0.75rem; font-weight:600; margin-bottom:3px;">From Date (শুরু):</label>
-              <input type="date" class="form-control form-control-sm" id="report-date-from" value="2026-07-01">
-            </div>
-            <div id="report-filter-range-to-container" style="display:none;">
-              <label class="form-label" style="font-size:0.75rem; font-weight:600; margin-bottom:3px;">To Date (শেষ):</label>
-              <input type="date" class="form-control form-control-sm" id="report-date-to" value="2026-07-31">
-            </div>
-
-            <!-- Category Selector -->
-            <div>
-              <label class="form-label" style="font-size:0.75rem; font-weight:600; margin-bottom:3px;">Category / Business Unit:</label>
-              <select class="form-control form-control-sm" id="report-category-select">
-                <option value="ALL">All Categories (সকল ইউনিট)</option>
-                <option value="05">Unit 05 - Dry Foods</option>
-                <option value="02">Unit 02 - Frozen Foods</option>
-                <option value="01">Unit 01 - Broiler Chicken</option>
-              </select>
-            </div>
-
-            <!-- Apply Button -->
-            <div>
-              <button type="button" class="btn btn-sm btn-primary" onclick="loadForecastVsProdReport()" style="width:100%; height:34px;">
-                <i class="fas fa-search"></i> Apply Filter
-              </button>
-            </div>
-          </div>
-
-          <!-- Quick Chips for Range & Single -->
-          <div id="report-quick-chips-row" style="display:none; margin-top:0.6rem; gap:0.4rem; flex-wrap:wrap;">
-            <span style="font-size:0.72rem; color:var(--text-muted); align-self:center;">Quick Picks:</span>
-            <button type="button" class="chip-btn" onclick="setReportQuickDate('today')">Today</button>
-            <button type="button" class="chip-btn" onclick="setReportQuickDate('yesterday')">Yesterday</button>
-            <button type="button" class="chip-btn" onclick="setReportQuickRange('week')">Last 7 Days</button>
-            <button type="button" class="chip-btn" onclick="setReportQuickRange('mtd')">Month to Date (MTD)</button>
-            <button type="button" class="chip-btn" onclick="setReportQuickRange('full_month')">Full Current Month</button>
+          <!-- Dynamic Action Buttons -->
+          <div style="display:flex; gap:0.4rem; align-items:center;">
+            <button type="button" class="btn btn-sm btn-primary" id="btn-export-report-excel" onclick="exportActiveReportExcel()">
+              <i class="fas fa-file-excel"></i> <span id="export-excel-btn-label">Export Forecast vs Production (.xlsx)</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="printPDFReport()">
+              <i class="fas fa-print"></i> Print / PDF
+            </button>
           </div>
         </div>
 
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <i class="fas fa-balance-scale" style="color:var(--primary);"></i>
-              <span id="report-forecast-prod-title">Forecast vs Production Performance Report</span>
+        <!-- ================= SUB-TAB 1: FORECAST VS PRODUCTION REPORT ================= -->
+        <div id="report-subtab-forecast-prod">
+          <!-- Compact 1-Row Inline Filter Toolbar (No Wasted Space) -->
+          <div class="card" style="margin-bottom:0.75rem; padding:0.5rem 0.85rem; background:var(--bg-secondary); border:1px solid var(--border-color);">
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem;">
+              <!-- Left: Date Filter Mode Buttons -->
+              <div style="display:flex; align-items:center; gap:0.4rem;">
+                <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">
+                  <i class="fas fa-filter" style="color:var(--primary);"></i> Mode:
+                </span>
+                <div class="date-dropdown-mode-tabs" style="display:flex; gap:0.2rem;">
+                  <button type="button" class="date-mode-btn active" id="report-mode-month-btn" onclick="setReportDateFilterMode('month')" style="padding:0.25rem 0.6rem; font-size:0.75rem;">Full Month</button>
+                  <button type="button" class="date-mode-btn" id="report-mode-single-btn" onclick="setReportDateFilterMode('single')" style="padding:0.25rem 0.6rem; font-size:0.75rem;">Single Date (নির্দিষ্ট দিন)</button>
+                  <button type="button" class="date-mode-btn" id="report-mode-range-btn" onclick="setReportDateFilterMode('range')" style="padding:0.25rem 0.6rem; font-size:0.75rem;">Date Range (পরিসর)</button>
+                </div>
+              </div>
+
+              <!-- Right: Inline Inputs + Apply -->
+              <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
+                <!-- Month Selector -->
+                <div id="report-filter-month-container" style="display:flex; align-items:center; gap:0.3rem;">
+                  <span style="font-size:0.75rem; font-weight:600; color:var(--text-muted);">Month:</span>
+                  <select class="form-control form-control-sm" id="report-month-select" style="min-width:145px; height:30px; font-size:0.78rem;" onchange="if(AppState.reportFilterMode === 'month') loadForecastVsProdReport();">
+                    <option value="2026-07" selected>📅 2026-07 (July 2026)</option>
+                    <option value="2026-08">📅 2026-08 (August 2026)</option>
+                    <option value="2026-06">📅 2026-06 (June 2026)</option>
+                  </select>
+                </div>
+
+                <!-- Single Date Selector -->
+                <div id="report-filter-single-container" style="display:none; align-items:center; gap:0.3rem;">
+                  <span style="font-size:0.75rem; font-weight:600; color:var(--text-muted);">Date:</span>
+                  <input type="date" class="form-control form-control-sm" id="report-single-date" value="2026-07-24" style="height:30px; font-size:0.78rem;">
+                </div>
+
+                <!-- Date Range From/To -->
+                <div id="report-filter-range-from-container" style="display:none; align-items:center; gap:0.3rem;">
+                  <span style="font-size:0.75rem; font-weight:600; color:var(--text-muted);">From:</span>
+                  <input type="date" class="form-control form-control-sm" id="report-date-from" value="2026-07-01" style="height:30px; font-size:0.78rem;">
+                </div>
+                <div id="report-filter-range-to-container" style="display:none; align-items:center; gap:0.3rem;">
+                  <span style="font-size:0.75rem; font-weight:600; color:var(--text-muted);">To:</span>
+                  <input type="date" class="form-control form-control-sm" id="report-date-to" value="2026-07-31" style="height:30px; font-size:0.78rem;">
+                </div>
+
+                <!-- Category Selector -->
+                <div style="display:flex; align-items:center; gap:0.3rem;">
+                  <span style="font-size:0.75rem; font-weight:600; color:var(--text-muted);">Unit:</span>
+                  <select class="form-control form-control-sm" id="report-category-select" style="min-width:130px; height:30px; font-size:0.78rem;">
+                    <option value="ALL">All Units (সকল)</option>
+                    <option value="05">Unit 05 - Dry Foods</option>
+                    <option value="02">Unit 02 - Frozen</option>
+                    <option value="01">Unit 01 - Chicken</option>
+                  </select>
+                </div>
+
+                <!-- Apply Button -->
+                <button type="button" class="btn btn-sm btn-primary" onclick="loadForecastVsProdReport()" style="height:30px; padding:0 0.75rem; font-size:0.78rem;">
+                  <i class="fas fa-search"></i> Apply
+                </button>
+              </div>
             </div>
-            <div id="report-filter-summary-badge" class="pill pill-safe" style="font-size:0.75rem;">
-              Filter: Full Month (July 2026)
+
+            <!-- Quick Chips for Range & Single -->
+            <div id="report-quick-chips-row" style="display:none; margin-top:0.35rem; padding-top:0.35rem; border-top:1px dashed var(--border-color); gap:0.3rem; flex-wrap:wrap; align-items:center;">
+              <span style="font-size:0.7rem; color:var(--text-muted);">Quick Picks:</span>
+              <button type="button" class="chip-btn" onclick="setReportQuickDate('today')" style="padding:0.15rem 0.5rem; font-size:0.72rem;">Today</button>
+              <button type="button" class="chip-btn" onclick="setReportQuickDate('yesterday')" style="padding:0.15rem 0.5rem; font-size:0.72rem;">Yesterday</button>
+              <button type="button" class="chip-btn" onclick="setReportQuickRange('week')" style="padding:0.15rem 0.5rem; font-size:0.72rem;">Last 7 Days</button>
+              <button type="button" class="chip-btn" onclick="setReportQuickRange('mtd')" style="padding:0.15rem 0.5rem; font-size:0.72rem;">Month to Date (MTD)</button>
+              <button type="button" class="chip-btn" onclick="setReportQuickRange('full_month')" style="padding:0.15rem 0.5rem; font-size:0.72rem;">Full Current Month</button>
             </div>
           </div>
-          <div class="table-responsive">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>SKU Code</th>
-                  <th>Product Name</th>
-                  <th>Category</th>
-                  <th style="text-align:right;">Original Forecast</th>
-                  <th style="text-align:right;">Revised Forecast</th>
-                  <th style="text-align:center;">Rev #</th>
-                  <th style="text-align:right;">Planned Target</th>
-                  <th style="text-align:right;">Actual Produced</th>
-                  <th style="text-align:right;">Variance</th>
-                  <th style="text-align:center;">Achievement %</th>
-                  <th style="text-align:center;">Status</th>
-                </tr>
-              </thead>
-              <tbody id="report-forecast-prod-tbody">
-                <!-- Injected via JavaScript -->
-              </tbody>
-            </table>
+
+          <!-- Forecast vs Production Table -->
+          <div class="card">
+            <div class="card-header" style="padding:0.5rem 1rem;">
+              <div class="card-title" style="font-size:0.92rem;">
+                <i class="fas fa-balance-scale" style="color:var(--primary);"></i>
+                <span id="report-forecast-prod-title">Forecast vs Production Report (Full Month: 2026-07)</span>
+              </div>
+              <div id="report-filter-summary-badge" class="pill pill-safe" style="font-size:0.75rem;">
+                Filter: Full Month: 2026-07 (All Units)
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>SKU Code</th>
+                    <th>Product Name</th>
+                    <th>Category</th>
+                    <th style="text-align:right;">Original Forecast</th>
+                    <th style="text-align:right;">Revised Forecast</th>
+                    <th style="text-align:center;">Rev #</th>
+                    <th style="text-align:right;">Planned Target</th>
+                    <th style="text-align:right;">Actual Produced</th>
+                    <th style="text-align:right;">Variance</th>
+                    <th style="text-align:center;">Achievement %</th>
+                    <th style="text-align:center;">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="report-forecast-prod-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <i class="fas fa-boxes" style="color:var(--success);"></i>
-              RM & PM Stock Summary & FSN Movement Status
+        <!-- ================= SUB-TAB 2: RM & PM STOCK SUMMARY & FSN ANALYSIS ================= -->
+        <div id="report-subtab-stock-fsn" style="display:none;">
+          <!-- Compact Stock Summary Bar -->
+          <div class="card" style="margin-bottom:0.75rem; padding:0.5rem 0.85rem; background:var(--bg-secondary); border:1px solid var(--border-color);">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+              <!-- Unit Selector -->
+              <div style="display:flex; align-items:center; gap:0.4rem;">
+                <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">
+                  <i class="fas fa-filter" style="color:var(--success);"></i> Category / Unit:
+                </span>
+                <select class="form-control form-control-sm" id="report-stock-cat-select" style="min-width:150px; height:30px; font-size:0.78rem;" onchange="loadStockSummaryReport()">
+                  <option value="ALL">All Categories (সকল ইউনিট)</option>
+                  <option value="05">Unit 05 - Dry Foods</option>
+                  <option value="02">Unit 02 - Frozen Foods</option>
+                  <option value="01">Unit 01 - Broiler Chicken</option>
+                </select>
+                <button type="button" class="btn btn-sm btn-primary" onclick="loadStockSummaryReport()" style="height:30px; padding:0 0.75rem; font-size:0.78rem;">
+                  <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+              </div>
+
+              <!-- Live KPI Badges -->
+              <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;" id="report-stock-summary-kpis">
+                <span class="pill pill-safe" id="report-kpi-total-val" style="font-size:0.74rem;">Valuation: Loading...</span>
+                <span class="pill pill-critical" id="report-kpi-critical-count" style="font-size:0.74rem;">Critical: Loading...</span>
+              </div>
             </div>
           </div>
-          <div class="table-responsive">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Item Code</th>
-                  <th>Material Name</th>
-                  <th>Type</th>
-                  <th>Unit / Cat</th>
-                  <th>UOM</th>
-                  <th>Current Stock</th>
-                  <th>Safety Stock</th>
-                  <th>Deficit Buffer</th>
-                  <th>Unit Price</th>
-                  <th>Total Valuation (৳)</th>
-                  <th>FSN Status</th>
-                </tr>
-              </thead>
-              <tbody id="report-stock-summary-tbody">
-                <!-- Injected via JavaScript -->
-              </tbody>
-            </table>
+
+          <!-- RM & PM Stock Summary Table -->
+          <div class="card">
+            <div class="card-header" style="padding:0.5rem 1rem;">
+              <div class="card-title" style="font-size:0.92rem;">
+                <i class="fas fa-boxes" style="color:var(--success);"></i>
+                RM & PM Stock Summary & FSN Movement Status
+              </div>
+              <div class="pill pill-safe" id="report-stock-count-badge" style="font-size:0.75rem;">
+                Live Store Balance & Inventory Health
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Unit / Cat</th>
+                    <th>UOM</th>
+                    <th>Current Stock</th>
+                    <th>Safety Stock</th>
+                    <th>Deficit Buffer</th>
+                    <th>Unit Price</th>
+                    <th>Total Valuation (৳)</th>
+                    <th>FSN Status</th>
+                  </tr>
+                </thead>
+                <tbody id="report-stock-summary-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 

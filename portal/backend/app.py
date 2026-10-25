@@ -705,90 +705,119 @@ def pull_erp_opening_stock():
         return sync_poloxy_erp()
 
 
-# ----------------- DASHBOARD STATS -----------------
+# ----------------- DASHBOARD STATS (OPTIMIZED WITH FAST IN-MEMORY TTL CACHE) -----------------
+import threading
+
+_DASHBOARD_CACHE = {}
+_DASHBOARD_CACHE_LOCK = threading.Lock()
+DASHBOARD_CACHE_TTL = 20.0  # seconds
+
+def invalidate_dashboard_cache():
+    with _DASHBOARD_CACHE_LOCK:
+        _DASHBOARD_CACHE.clear()
+
 @app.route("/api/dashboard/stats", methods=["GET"])
 def get_dashboard_stats():
     cat = request.args.get("category", "").strip()
-    month = request.args.get("month", "2026-07")
-    uom = request.args.get("uom", "Packet") # 'Packet' or 'Carton'
+    month = request.args.get("month", "2026-07").strip()
+    uom = request.args.get("uom", "Packet").strip()
+    force_refresh = request.args.get("refresh", "0") == "1"
     
+    cache_key = (cat, month, uom)
+    now = time.time()
+    
+    if not force_refresh:
+        with _DASHBOARD_CACHE_LOCK:
+            if cache_key in _DASHBOARD_CACHE:
+                cached_time, cached_data = _DASHBOARD_CACHE[cache_key]
+                if now - cached_time < DASHBOARD_CACHE_TTL:
+                    return jsonify(cached_data)
+
     conn = get_db()
     cat_filter = "AND category_code = ?" if cat and cat not in ('ALL', 'undefined', 'null', 'None', '') else ""
     params = [cat] if cat and cat not in ('ALL', 'undefined', 'null', 'None', '') else []
     
-    total_materials = conn.execute(f"SELECT COUNT(*) FROM materials WHERE 1=1 {cat_filter}", params).fetchone()[0]
-    total_rm = conn.execute(f"SELECT COUNT(*) FROM materials WHERE type = 'RM' {cat_filter}", params).fetchone()[0]
-    total_pm = conn.execute(f"SELECT COUNT(*) FROM materials WHERE type = 'PM' {cat_filter}", params).fetchone()[0]
-    
-    critical_count = conn.execute(f"SELECT COUNT(*) FROM materials WHERE current_stock < safety_stock {cat_filter}", params).fetchone()[0]
-    low_stock_count = conn.execute(f"SELECT COUNT(*) FROM materials WHERE current_stock >= safety_stock AND current_stock <= (safety_stock * 1.5) {cat_filter}", params).fetchone()[0]
-    safe_count = total_materials - critical_count - low_stock_count
-    
-    val_row = conn.execute(f"""
-        SELECT SUM(current_stock * unit_price) AS total_val,
-               SUM(CASE WHEN type='RM' THEN current_stock * unit_price ELSE 0 END) AS rm_val,
-               SUM(CASE WHEN type='PM' THEN current_stock * unit_price ELSE 0 END) AS pm_val
+    # 1. Combined Materials Stats & Valuation (Single fast aggregation)
+    mat_row = conn.execute(f"""
+        SELECT 
+            COUNT(*) AS total_materials,
+            COALESCE(SUM(CASE WHEN type='RM' THEN 1 ELSE 0 END), 0) AS total_rm,
+            COALESCE(SUM(CASE WHEN type='PM' THEN 1 ELSE 0 END), 0) AS total_pm,
+            COALESCE(SUM(CASE WHEN current_stock < safety_stock THEN 1 ELSE 0 END), 0) AS critical_count,
+            COALESCE(SUM(CASE WHEN current_stock >= safety_stock AND current_stock <= (safety_stock * 1.5) THEN 1 ELSE 0 END), 0) AS low_stock_count,
+            COALESCE(SUM(current_stock * unit_price), 0.0) AS total_val,
+            COALESCE(SUM(CASE WHEN type='RM' THEN current_stock * unit_price ELSE 0 END), 0.0) AS rm_val,
+            COALESCE(SUM(CASE WHEN type='PM' THEN current_stock * unit_price ELSE 0 END), 0.0) AS pm_val
         FROM materials WHERE 1=1 {cat_filter}
     """, params).fetchone()
     
-    total_valuation = val_row["total_val"] or 0.0
-    rm_valuation = val_row["rm_val"] or 0.0
-    pm_valuation = val_row["pm_val"] or 0.0
+    total_materials = mat_row["total_materials"] or 0
+    total_rm = mat_row["total_rm"] or 0
+    total_pm = mat_row["total_pm"] or 0
+    critical_count = mat_row["critical_count"] or 0
+    low_stock_count = mat_row["low_stock_count"] or 0
+    safe_count = max(0, total_materials - critical_count - low_stock_count)
+    total_valuation = mat_row["total_val"] or 0.0
+    rm_valuation = mat_row["rm_val"] or 0.0
+    pm_valuation = mat_row["pm_val"] or 0.0
+
+    # 2. Combined Forecast, Production & Requisitions
+    sku_cat_filter = "AND s.category_code = ?" if cat and cat not in ('ALL', 'undefined', 'null', 'None', '') else ""
+    plan_cat_filter = "AND category_code = ?" if cat and cat not in ('ALL', 'undefined', 'null', 'None', '') else ""
+    req_cat_filter = "AND category_code = ?" if cat and cat not in ('ALL', 'undefined', 'null', 'None', '') else ""
     
-    # Forecast & Production
-    sku_cat_join = "JOIN skus s ON sf.sku_id = s.id"
-    sku_cat_filter = "AND s.category_code = ?" if cat and cat != 'ALL' else ""
-    fc_row = conn.execute(f"""
-        SELECT SUM(sf.forecast_ctn) AS total_ctn,
-               SUM(sf.forecast_ctn * s.ctn_size) AS total_pcs
-        FROM sales_forecast sf
-        {sku_cat_join}
-        WHERE sf.month_year = ? {sku_cat_filter}
-    """, [month] + params).fetchone()
+    perf_sql = f"""
+        SELECT 
+            (SELECT COALESCE(SUM(sf.forecast_ctn), 0.0) FROM sales_forecast sf JOIN skus s ON sf.sku_id = s.id WHERE sf.month_year = ? {sku_cat_filter}) AS total_forecast_ctn,
+            (SELECT COALESCE(SUM(sf.forecast_ctn * s.ctn_size), 0.0) FROM sales_forecast sf JOIN skus s ON sf.sku_id = s.id WHERE sf.month_year = ? {sku_cat_filter}) AS total_forecast_pcs,
+            (SELECT COALESCE(SUM(planned_ctn), 0.0) FROM production_plans WHERE month_year = ? {plan_cat_filter}) AS planned_ctn,
+            (SELECT COALESCE(SUM(actual_produced_ctn), 0.0) FROM production_plans WHERE month_year = ? {plan_cat_filter}) AS actual_ctn,
+            (SELECT COALESCE(SUM(planned_pcs), 0.0) FROM production_plans WHERE month_year = ? {plan_cat_filter}) AS planned_pcs,
+            (SELECT COALESCE(SUM(actual_produced_pcs), 0.0) FROM production_plans WHERE month_year = ? {plan_cat_filter}) AS actual_pcs,
+            (SELECT COUNT(*) FROM material_requisitions WHERE status IN ('Pending', 'Partially Issued') {req_cat_filter}) AS pending_mr,
+            (SELECT COUNT(*) FROM purchase_requisitions WHERE status IN ('Pending', 'Approved', 'In-Transit') {req_cat_filter}) AS pending_pr
+    """
+    perf_params = []
+    for _ in range(2):
+        perf_params.append(month)
+        if sku_cat_filter: perf_params.append(cat)
+    for _ in range(4):
+        perf_params.append(month)
+        if plan_cat_filter: perf_params.append(cat)
+    if req_cat_filter: perf_params.append(cat)
+    if req_cat_filter: perf_params.append(cat)
     
-    total_forecast_ctn = fc_row["total_ctn"] or 0.0
-    total_forecast_pcs = fc_row["total_pcs"] or 0.0
-    
-    plan_cat_filter = "AND category_code = ?" if cat and cat != 'ALL' else ""
-    plan_row = conn.execute(f"""
-        SELECT SUM(planned_ctn) AS planned_ctn, SUM(actual_produced_ctn) AS actual_ctn,
-               SUM(planned_pcs) AS planned_pcs, SUM(actual_produced_pcs) AS actual_pcs
-        FROM production_plans WHERE month_year = ? {plan_cat_filter}
-    """, [month] + params).fetchone()
-    
-    planned_ctn = plan_row["planned_ctn"] or 0.0
-    actual_ctn = plan_row["actual_ctn"] or 0.0
-    planned_pcs = plan_row["planned_pcs"] or (planned_ctn * 12)
-    actual_pcs = plan_row["actual_pcs"] or (actual_ctn * 12)
-    
+    perf_row = conn.execute(perf_sql, perf_params).fetchone()
+    total_forecast_ctn = perf_row["total_forecast_ctn"] or 0.0
+    total_forecast_pcs = perf_row["total_forecast_pcs"] or 0.0
+    planned_ctn = perf_row["planned_ctn"] or 0.0
+    actual_ctn = perf_row["actual_ctn"] or 0.0
+    planned_pcs = perf_row["planned_pcs"] or (planned_ctn * 12)
+    actual_pcs = perf_row["actual_pcs"] or (actual_ctn * 12)
+    pending_mr = perf_row["pending_mr"] or 0
+    pending_pr = perf_row["pending_pr"] or 0
     ach_pct = round((actual_ctn / planned_ctn * 100), 1) if planned_ctn > 0 else 0.0
-    
-    # Requisitions
-    req_cat_filter = "AND category_code = ?" if cat and cat != 'ALL' else ""
-    pending_mr = conn.execute(f"SELECT COUNT(*) FROM material_requisitions WHERE status IN ('Pending', 'Partially Issued') {req_cat_filter}", params).fetchone()[0]
-    pending_pr = conn.execute(f"SELECT COUNT(*) FROM purchase_requisitions WHERE status IN ('Pending', 'Approved', 'In-Transit') {req_cat_filter}", params).fetchone()[0]
-    
-    # FSN counts
-    fsn_rows = conn.execute(f"""
-        SELECT m.id, m.current_stock,
-               COALESCE(ABS(SUM(CASE WHEN t.txn_type = 'ISSUE_PRODUCTION' THEN t.qty ELSE 0 END)), 0) AS total_issued
-        FROM materials m
-        LEFT JOIN store_transactions t ON m.id = t.material_id
-        WHERE 1=1 {cat_filter}
-        GROUP BY m.id
-    """, params).fetchall()
-    
-    fast_count, slow_count, non_moving_count = 0, 0, 0
-    for r in fsn_rows:
-        issued = r["total_issued"]
-        stk = r["current_stock"]
-        if issued == 0:
-            non_moving_count += 1
-        elif stk > 0 and (issued / stk) >= 0.15:
-            fast_count += 1
-        else:
-            slow_count += 1
-            
+
+    # 3. Fast SQL-level FSN Classification
+    fsn_sql = f"""
+        SELECT 
+            COALESCE(SUM(CASE WHEN total_issued = 0 THEN 1 ELSE 0 END), 0) AS non_moving_count,
+            COALESCE(SUM(CASE WHEN total_issued > 0 AND current_stock > 0 AND (total_issued * 1.0 / current_stock) >= 0.15 THEN 1 ELSE 0 END), 0) AS fast_count,
+            COALESCE(SUM(CASE WHEN total_issued > 0 AND (current_stock = 0 OR (total_issued * 1.0 / current_stock) < 0.15) THEN 1 ELSE 0 END), 0) AS slow_count
+        FROM (
+            SELECT m.id, m.current_stock, COALESCE(ABS(SUM(CASE WHEN t.txn_type = 'ISSUE_PRODUCTION' THEN t.qty ELSE 0 END)), 0) AS total_issued
+            FROM materials m
+            LEFT JOIN store_transactions t ON m.id = t.material_id
+            WHERE 1=1 {cat_filter}
+            GROUP BY m.id
+        )
+    """
+    fsn_row = conn.execute(fsn_sql, params).fetchone()
+    non_moving_count = fsn_row["non_moving_count"] or 0
+    fast_count = fsn_row["fast_count"] or 0
+    slow_count = fsn_row["slow_count"] or 0
+
+    # 4. Critical deficit items (Top 8)
     critical_items = conn.execute(f"""
         SELECT id, item_code, name, type, unit, current_stock, safety_stock, in_transit, supplier_name, unit_price,
                ROUND(safety_stock - current_stock, 1) AS deficit
@@ -798,6 +827,7 @@ def get_dashboard_stats():
         LIMIT 8
     """, params).fetchall()
     
+    # 5. Recent Transactions (Top 6)
     recent_txns = conn.execute(f"""
         SELECT t.*, m.name AS material_name, m.unit, m.type, m.category_code
         FROM store_transactions t
@@ -807,8 +837,8 @@ def get_dashboard_stats():
     """, params).fetchall()
     
     conn.close()
-    
-    return jsonify({
+
+    result_data = {
         "materials": {
             "total": total_materials,
             "rm_count": total_rm,
@@ -842,7 +872,12 @@ def get_dashboard_stats():
         },
         "critical_items": rows_to_dict(critical_items),
         "recent_transactions": rows_to_dict(recent_txns)
-    })
+    }
+
+    with _DASHBOARD_CACHE_LOCK:
+        _DASHBOARD_CACHE[cache_key] = (now, result_data)
+
+    return jsonify(result_data)
 
 # ----------------- SKU (FINISH GOODS) MASTER -----------------
 @app.route("/api/skus", methods=["GET"])
@@ -1352,6 +1387,7 @@ def save_forecast():
             
         conn.commit()
         conn.close()
+        invalidate_dashboard_cache()
         return jsonify({
             "success": True, 
             "count": updated_count, 
@@ -1719,6 +1755,7 @@ def create_production_plan():
                 
         conn.commit()
         conn.close()
+        invalidate_dashboard_cache()
         return jsonify({"success": True, "plan_id": plan_id, "plan_no": plan_no})
     except Exception as e:
         import traceback
@@ -3184,7 +3221,7 @@ def export_excel_report():
     conn = get_db()
 
     # --- 1. STORE INVENTORY & STOCK SHEET WITH AGING & FLOOR STOCK ---
-    if section in ("all", "store", "inventory", "reports"):
+    if section in ("all", "store", "inventory", "reports", "stock_fsn", "reports_stock"):
         ws = wb.create_sheet(title="Store & Stock Inventory")
         ws.merge_cells("A1:P1")
         ws["A1"] = f"PARAGON AGRO LIMITED - STORE INVENTORY, RM-PM STOCK & AGING REPORT ({month})"
@@ -3424,6 +3461,99 @@ def export_excel_report():
                 cell = ws.cell(r_idx, c_i)
                 cell.border = thin_border
                 if c_fill: cell.fill = c_fill
+                
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 14)
+
+    # --- 5. FORECAST VS PRODUCTION PERFORMANCE SHEET ---
+    if section in ("all", "forecast_vs_prod", "reports_forecast"):
+        plan_date = request.args.get("plan_date", "").strip()
+        date_from = request.args.get("date_from", "").strip()
+        date_to = request.args.get("date_to", "").strip()
+        
+        ws = wb.create_sheet(title="Forecast vs Production")
+        ws.merge_cells("A1:L1")
+        time_desc = f"Date: {plan_date}" if plan_date else (f"Range: {date_from} to {date_to}" if (date_from and date_to) else f"Full Month: {month}")
+        ws["A1"] = f"PARAGON AGRO LIMITED - FORECAST VS PRODUCTION REPORT ({time_desc}) - UOM: {uom.upper()}"
+        style_merged_range(ws, "A1:L1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
+        
+        headers = [
+            "SKU Code", "Finished Good Name", "Category", "Pack / Ctn Size",
+            f"Original Forecast ({uom})", f"Revised Forecast ({uom})", "Revision #",
+            f"Planned Target ({uom})", f"Actual Produced ({uom})", f"Variance ({uom})",
+            "Achievement %", "Performance Status"
+        ]
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(3, col_idx, h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+            
+        sql = """
+            SELECT s.sku_code, s.name AS sku_name, s.category_code, s.category, s.ctn_size, s.pack_size,
+                   COALESCE(sf.original_forecast_ctn, sf.forecast_ctn, 0.0) AS original_forecast_ctn,
+                   COALESCE(sf.forecast_ctn, 0.0) AS forecast_ctn,
+                   COALESCE(sf.revision_no, 0) AS revision_no,
+                   COALESCE(SUM(pp.planned_ctn), 0.0) AS planned_ctn,
+                   COALESCE(SUM(pp.actual_produced_ctn), 0.0) AS actual_produced_ctn
+            FROM skus s
+            LEFT JOIN sales_forecast sf ON s.id = sf.sku_id AND sf.month_year = ?
+            LEFT JOIN production_plans pp ON s.id = pp.sku_id
+        """
+        params = [month]
+        if plan_date:
+            sql += " AND pp.plan_date = ?"
+            params.append(plan_date)
+        elif date_from and date_to:
+            sql += " AND pp.plan_date >= ? AND pp.plan_date <= ?"
+            params.extend([date_from, date_to])
+        else:
+            sql += " AND pp.month_year = ?"
+            params.append(month)
+
+        sql += " WHERE s.status = 'Active'"
+        if cat and cat not in ('ALL', 'undefined', 'null', ''):
+            sql += " AND s.category_code = ?"
+            params.append(cat)
+        sql += " GROUP BY s.id ORDER BY forecast_ctn DESC, planned_ctn DESC"
+        rows = conn.execute(sql, params).fetchall()
+        
+        is_carton = uom == "Carton"
+        for r_idx, r in enumerate(rows, 4):
+            c_fill = zebra_fill if (r_idx % 2 == 0) else None
+            orig_fc = r["original_forecast_ctn"] if is_carton else (r["original_forecast_ctn"] * r["ctn_size"])
+            rev_fc = r["forecast_ctn"] if is_carton else (r["forecast_ctn"] * r["ctn_size"])
+            plan_val = r["planned_ctn"] if is_carton else (r["planned_ctn"] * r["ctn_size"])
+            act_val = r["actual_produced_ctn"] if is_carton else (r["actual_produced_ctn"] * r["ctn_size"])
+            variance = act_val - rev_fc
+            ach_pct = round((act_val / rev_fc * 100), 1) if rev_fc > 0 else 0.0
+            
+            status_text = "Exceeded" if ach_pct >= 100 else ("On Target" if ach_pct >= 80 else ("In Progress" if ach_pct >= 50 else "Shortfall"))
+            
+            ws.cell(r_idx, 1, r["sku_code"]).font = data_bold
+            ws.cell(r_idx, 2, r["sku_name"]).font = data_font
+            ws.cell(r_idx, 3, f"Unit {r['category_code']}").font = data_font
+            ws.cell(r_idx, 4, f"{r['pack_size'] or ''} • {r['ctn_size']} Pcs/Ctn").font = data_font
+            ws.cell(r_idx, 5, round(orig_fc, 1)).font = data_font
+            ws.cell(r_idx, 6, round(rev_fc, 1)).font = data_bold
+            ws.cell(r_idx, 7, f"Rev {r['revision_no']}").font = data_font
+            ws.cell(r_idx, 8, round(plan_val, 1)).font = data_font
+            ws.cell(r_idx, 9, round(act_val, 1)).font = data_bold
+            ws.cell(r_idx, 10, round(variance, 1)).font = data_bold
+            ws.cell(r_idx, 11, f"{ach_pct}%").font = data_bold
+            
+            st_cell = ws.cell(r_idx, 12, status_text)
+            st_cell.font = data_bold
+            if ach_pct >= 80: st_cell.fill = fast_fill
+            elif ach_pct >= 50: st_cell.fill = slow_fill
+            else: st_cell.fill = non_moving_fill
+            
+            for c_i in range(1, 13):
+                cell = ws.cell(r_idx, c_i)
+                cell.border = thin_border
+                if c_i != 12 and c_fill: cell.fill = c_fill
                 
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)

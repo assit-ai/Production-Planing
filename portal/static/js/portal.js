@@ -2754,10 +2754,61 @@ async function submitReceiveGRN() {
   }
 }
 
-// ----------------- 7. REPORTS CONTROLLER -----------------
+// ----------------- 7. REPORTS CONTROLLER (SEPARATE TABS & COMPACT TOOLBAR) -----------------
+function switchReportSubTab(tabName) {
+  AppState.reportSubTab = tabName;
+  const isForecast = tabName === 'forecast_prod';
+
+  document.getElementById('tab-btn-forecast-prod')?.classList.toggle('active', isForecast);
+  document.getElementById('tab-btn-stock-fsn')?.classList.toggle('active', !isForecast);
+
+  const fSec = document.getElementById('report-subtab-forecast-prod');
+  const sSec = document.getElementById('report-subtab-stock-fsn');
+  if (fSec) fSec.style.display = isForecast ? 'block' : 'none';
+  if (sSec) sSec.style.display = !isForecast ? 'block' : 'none';
+
+  const btnLabel = document.getElementById('export-excel-btn-label');
+  if (btnLabel) {
+    btnLabel.textContent = isForecast ? 'Export Forecast vs Production (.xlsx)' : 'Export RM & PM Stock Summary (.xlsx)';
+  }
+
+  if (isForecast) {
+    loadForecastVsProdReport();
+  } else {
+    loadStockSummaryReport();
+  }
+}
+
 async function loadReportsView() {
-  loadForecastVsProdReport();
-  loadStockSummaryReport();
+  if (!AppState.reportSubTab) AppState.reportSubTab = 'forecast_prod';
+  switchReportSubTab(AppState.reportSubTab);
+}
+
+function exportActiveReportExcel() {
+  const isForecast = (AppState.reportSubTab || 'forecast_prod') === 'forecast_prod';
+  const uom = AppState.displayUOM;
+  const month = document.getElementById('report-month-select')?.value || AppState.selectedMonth;
+
+  if (isForecast) {
+    const cat = document.getElementById('report-category-select')?.value || AppState.selectedCategory;
+    const mode = AppState.reportFilterMode || 'month';
+    let url = `/api/reports/export/excel?section=forecast_vs_prod&category=${cat}&month=${month}&uom=${uom}`;
+    if (mode === 'single') {
+      const pDate = document.getElementById('report-single-date')?.value || '';
+      if (pDate) url += `&plan_date=${pDate}`;
+    } else if (mode === 'range') {
+      const dFrom = document.getElementById('report-date-from')?.value || '';
+      const dTo = document.getElementById('report-date-to')?.value || '';
+      if (dFrom && dTo) url += `&date_from=${dFrom}&date_to=${dTo}`;
+    }
+    showToast('Downloading Forecast vs Production Excel report...', 'primary');
+    window.location.href = url;
+  } else {
+    const cat = document.getElementById('report-stock-cat-select')?.value || AppState.selectedCategory;
+    const url = `/api/reports/export/excel?section=stock_fsn&category=${cat}&month=${month}&uom=${uom}`;
+    showToast('Downloading RM & PM Stock Summary Excel report...', 'primary');
+    window.location.href = url;
+  }
 }
 
 function setReportDateFilterMode(mode) {
@@ -2908,14 +2959,25 @@ async function loadForecastVsProdReport() {
 }
 
 async function loadStockSummaryReport() {
-  const cat = AppState.selectedCategory;
+  const cat = document.getElementById('report-stock-cat-select')?.value || AppState.selectedCategory;
   try {
     const res = await fetch(`/api/reports/stock-summary?category=${cat}`);
     const items = await res.json();
     const tbody = document.getElementById('report-stock-summary-tbody');
     if (!tbody) return;
 
+    if (!items || items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; color:var(--text-muted); padding:1.5rem;">No RM/PM materials found for this selection.</td></tr>';
+      return;
+    }
+
+    let totalVal = 0;
+    let criticalCount = 0;
+
     tbody.innerHTML = items.map(m => {
+      totalVal += (m.stock_value || 0);
+      if (m.current_stock < m.safety_stock) criticalCount++;
+
       let fsnClass = 'pill-fast';
       if (m.fsn_status === 'Slow-Moving') fsnClass = 'pill-slow';
       else if (m.fsn_status === 'Non-Moving') fsnClass = 'pill-non-moving';
@@ -2940,6 +3002,13 @@ async function loadStockSummaryReport() {
         </tr>
       `;
     }).join('');
+
+    const valEl = document.getElementById('report-kpi-total-val');
+    if (valEl) valEl.textContent = `Total Valuation: ৳${Math.round(totalVal).toLocaleString()}`;
+    const critEl = document.getElementById('report-kpi-critical-count');
+    if (critEl) critEl.textContent = `Critical: ${criticalCount} Items`;
+    const countBadge = document.getElementById('report-stock-count-badge');
+    if (countBadge) countBadge.textContent = `${items.length} Materials Total • Live Balance`;
   } catch (e) {
     console.error('Error loading stock summary report:', e);
   }
