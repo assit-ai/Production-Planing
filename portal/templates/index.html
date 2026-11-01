@@ -23,7 +23,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-  <link rel="stylesheet" href="/static/css/portal.css">
+  <link rel="stylesheet" href="/static/css/portal.css?v=20261028_v1">
 </head>
 <body>
 
@@ -182,6 +182,13 @@
           <button class="uom-btn" data-uom="Carton" onclick="setDisplayUOM('Carton')">Carton</button>
         </div>
 
+        <!-- Action Center Drawer Button (Slide bar with pending task badge) -->
+        <button class="btn btn-sm btn-outline action-drawer-btn" id="action-drawer-toggle-btn" onclick="toggleActionDrawer()" title="আজকের কাজ / Action Center স্লাইড-আউট খুলুন" style="position:relative; display:inline-flex; align-items:center; gap:0.4rem; font-weight:700; border-color:rgba(245,158,11,0.45); color:var(--text-main); background:var(--bg-tertiary);">
+          <i class="fas fa-bolt" style="color:var(--warning);"></i>
+          <span>আজকের কাজ</span>
+          <span class="badge" id="nav-action-count" style="display:none; background:var(--danger); color:#fff; font-size:0.68rem; padding:1px 6px; border-radius:99px; min-width:18px;">0</span>
+        </button>
+
         <!-- Mobile App Quick Install / Instructions Button -->
         <button class="btn btn-sm btn-outline btn-mobile-app" onclick="showMobileAppInstructions()" title="📱 Mobile App Installation Guide" style="border-color:rgba(56, 189, 248, 0.4); color:#38bdf8;">
           <i class="fas fa-mobile-alt"></i>
@@ -203,6 +210,41 @@
 
     <!-- Main Container Body -->
     <main class="page-container">
+
+      <!-- Guided Planning Workflow Bar (Collapsible/Expandable) -->
+      <div id="guided-workflow-container" class="guided-workflow-bar" style="margin-bottom:1.25rem; background:var(--bg-secondary); border:1px solid var(--card-border); border-radius:12px; padding:0.65rem 1.15rem; box-shadow:var(--shadow-sm); transition:all 0.25s ease;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.6rem; cursor:pointer; user-select:none;" onclick="toggleWorkflowBar()" title="ক্লিক করে হাইড বা এক্সপ্যান্ড করুন">
+          <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; font-weight:700; color:var(--text-main);">
+            <i class="fas fa-layer-group" style="color:var(--primary);"></i> 
+            <span>স্ট্যান্ডার্ড প্ল্যানিং ওয়ার্কফ্লো (Standard Planning Workflow)</span>
+            <span id="workflow-collapsed-badge" class="pill pill-safe" style="display:none; font-size:0.7rem; padding:2px 8px; margin-left:6px; font-weight:600;">
+              ১. Forecast ➔ ২. Production ➔ ৩. Store ➔ ৪. Ledger
+            </span>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px; font-size:0.75rem; border-radius:6px; color:var(--text-dim); display:flex; align-items:center; gap:4px; pointer-events:none;">
+            <span id="workflow-toggle-label">হাইড করুন</span>
+            <i id="workflow-toggle-icon" class="fas fa-chevron-up"></i>
+          </button>
+        </div>
+        
+        <div id="workflow-steps-content" style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; margin-top:0.65rem; padding-top:0.65rem; border-top:1px dashed var(--card-border); transition:all 0.25s ease;">
+          <button type="button" class="btn btn-sm btn-outline" onclick="switchView('forecast')" style="font-size:0.78rem; font-weight:600; padding:4px 10px; border-radius:6px;">
+            ১. 📈 সেলস ফোরকাস্ট (Sales Forecast)
+          </button>
+          <i class="fas fa-arrow-right" style="font-size:0.68rem; color:var(--text-dim);"></i>
+          <button type="button" class="btn btn-sm btn-outline" onclick="switchView('production')" style="font-size:0.78rem; font-weight:600; padding:4px 10px; border-radius:6px;">
+            ২. 🏭 প্রডাকশন প্ল্যান (Net of FG Stock)
+          </button>
+          <i class="fas fa-arrow-right" style="font-size:0.68rem; color:var(--text-dim);"></i>
+          <button type="button" class="btn btn-sm btn-outline" onclick="switchView('store')" style="font-size:0.78rem; font-weight:600; padding:4px 10px; border-radius:6px;">
+            ৩. 📦 স্টোর রিকুইজিশন (Net of RM-PM Stock)
+          </button>
+          <i class="fas fa-arrow-right" style="font-size:0.68rem; color:var(--text-dim);"></i>
+          <button type="button" class="btn btn-sm btn-outline" onclick="switchView('reports')" style="font-size:0.78rem; font-weight:600; padding:4px 10px; border-radius:6px;">
+            ৪. 📊 স্টক লেজার ও রিপোর্ট (Stock Ledger)
+          </button>
+        </div>
+      </div>
 
       <!-- ================= 1. DASHBOARD VIEW (HYPERLINKED CARDS) ================= -->
       <section id="view-dashboard" class="view-section active">
@@ -263,6 +305,9 @@
             </div>
           </div>
         </div>
+
+        <!-- Action Center & Today's Pending Tasks (Collapsible & Filtered) -->
+        <div id="my-tasks-panel"></div>
 
         <!-- Charts Row -->
         <div class="chart-grid">
@@ -465,8 +510,8 @@
           <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">
             Super Admin can selectively delete records (Sales Forecast, Production Plans, Store Requisitions, MRRs, or Wastage) by specific date range or wipe all data.
           </p>
-          <button class="btn btn-danger" onclick="openClearDataModal()">
-            <i class="fas fa-trash-alt"></i> Open Data Cleanup Tool (ডেটা মুছুন)
+          <button class="btn btn-danger" onclick="openClearDataModal('forecast')">
+            <i class="fas fa-trash-alt"></i> Open Forecast Data Cleanup Tool (ফোরকাস্ট ডেটা মুছুন)
           </button>
         </div>
       </section>
@@ -549,14 +594,20 @@
             <button class="btn btn-outline" onclick="openFloorStockModal()" style="border-color:var(--cyan); color:var(--cyan);" title="Manage Material Floor Stock Issued to Production">
               <i class="fas fa-industry"></i> Floor Stock (ফ্লোর স্টক)
             </button>
-            <button class="btn btn-outline" onclick="openPoloxySyncModal()" title="Pull output and opening stock from Poloxy ERP (Rules 8 & 9)">
-              <i class="fas fa-sync-alt" style="color:var(--primary);"></i> Pull Poloxy ERP
+            <button class="btn btn-outline" onclick="openOutputImportModal()" style="border-color:var(--success); color:var(--success);" title="Poloxy-র Output রিপোর্ট থেকে Actual Output আপডেট">
+              <i class="fas fa-file-import"></i> Import Actual Output (Poloxy)
+            </button>
+            <button class="btn btn-outline" onclick="openPoloxySyncModal()" title="Pull FG opening stock from Poloxy ERP">
+              <i class="fas fa-sync-alt" style="color:var(--primary);"></i> Pull Poloxy Stock
             </button>
             <button class="btn btn-outline" onclick="triggerRealignProduction()" style="border-color:#f59e0b; color:#d97706;" title="Auto-align future daily plans with revised forecast">
               <i class="fas fa-bolt"></i> Auto-Align Plans
             </button>
             <button class="btn btn-primary" onclick="openCreatePlanModal()">
               <i class="fas fa-plus"></i> Create Plan
+            </button>
+            <button class="btn btn-outline admin-only" onclick="openClearDataModal('production')" style="border-color:var(--danger); color:var(--danger); font-weight:700;" title="Super Admin Production Data Cleanup Tool">
+              <i class="fas fa-trash-alt"></i> ডেটা মুছুন (Cleanup)
             </button>
             <div id="production-readonly-tag" class="pill pill-safe" style="display:none; align-items:center; gap:0.4rem; padding:0.4rem 0.85rem; font-size:0.8rem; background:rgba(59, 130, 246, 0.12); border:1px solid rgba(59, 130, 246, 0.3); color:#38bdf8;">
               <i class="fas fa-eye"></i> Read-Only View (শুধুমাত্র Production টিম প্ল্যান তৈরি করতে পারে)
@@ -603,27 +654,82 @@
           <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">
             Super Admin can selectively delete records (Sales Forecast, Production Plans, Store Requisitions, MRRs, or Wastage) by specific date range or wipe all data.
           </p>
-          <button class="btn btn-danger" onclick="openClearDataModal()">
-            <i class="fas fa-trash-alt"></i> Open Data Cleanup Tool (ডেটা মুছুন)
+          <button class="btn btn-danger" onclick="openClearDataModal('production')">
+            <i class="fas fa-trash-alt"></i> Open Production Data Cleanup Tool (প্রোডাকশন ডেটা মুছুন)
           </button>
         </div>
       </section>
 
       <!-- ================= 4. STORE & INVENTORY VIEW (SEPARATE TABS) ================= -->
       <section id="view-store" class="view-section">
-        <!-- Sub-Navigation Tabs (Store Inventory vs Incoming Requisitions vs MRR vs Wastage) -->
-        <div class="store-sub-nav">
-          <div class="store-tab-link active" data-subtab="inventory" onclick="switchStoreSubTab('inventory')">
-            <i class="fas fa-boxes"></i> Store Inventory & RM-PM Stock
+        <!-- Collapsed Store Bar Pill (shown when user clicks Hide / Collapse) -->
+        <div id="store-header-collapsed-pill" style="display:none; justify-content:space-between; align-items:center; background:var(--bg-tertiary); border:1px solid var(--card-border); border-radius:10px; padding:0.4rem 0.85rem; margin-bottom:0.75rem;">
+          <div style="font-size:0.82rem; font-weight:700; color:var(--text-main); display:flex; align-items:center; gap:0.45rem;">
+            <i class="fas fa-warehouse text-primary"></i>
+            <span>Store Navigation Tabs (লুকানো আছে)</span>
+            <span class="badge" id="store-current-tab-badge" style="background:var(--primary); color:#fff; font-size:0.68rem;">Inventory</span>
           </div>
-          <div class="store-tab-link" data-subtab="requisitions" onclick="switchStoreSubTab('requisitions')">
-            <i class="fas fa-dolly-flatbed"></i> Production Material Requisitions
+          <div style="display:flex; gap:0.4rem;">
+            <button type="button" class="btn btn-xs btn-primary" onclick="openStoreDrawer()" style="font-weight:700;">
+              <i class="fas fa-sliders-h"></i> স্লাইডার ড্রয়ার
+            </button>
+            <button type="button" class="btn btn-xs btn-outline" onclick="toggleStoreHeaderCollapse()" style="font-weight:700;">
+              <i class="fas fa-expand-alt"></i> এক্সপ্যান্ড করুন
+            </button>
           </div>
-          <div class="store-tab-link" data-subtab="mrr" onclick="switchStoreSubTab('mrr')">
-            <i class="fas fa-truck-loading"></i> MRR Inward Register (Stock Entry)
+        </div>
+
+        <!-- Store Navigation Header with Right-Aligned Slider Tab Bar & Side Drawer Toggle -->
+        <div class="store-header-bar" id="store-header-bar-main">
+          <div class="store-header-info">
+            <div class="store-header-icon">
+              <i class="fas fa-warehouse"></i>
+            </div>
+            <div>
+              <div class="store-header-title">Store & Inventory Control</div>
+              <div class="store-header-subtitle">Factory Godown, Requisitions, Inward & Stock Audit</div>
+            </div>
           </div>
-          <div class="store-tab-link" data-subtab="wastage" onclick="switchStoreSubTab('wastage')">
-            <i class="fas fa-trash-alt"></i> Wastage & Scrap Register
+
+          <!-- Modern Right-Aligned Segmented Tab Slider & Action Tools -->
+          <div style="display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap;">
+            <div class="store-tab-slider-container">
+              <button class="store-tab-slider-arrow left" onclick="slideStoreTabs('left')" title="Scroll Left" type="button">
+                <i class="fas fa-chevron-left"></i>
+              </button>
+              <div class="store-tab-slider" id="store-subtab-slider">
+                <div class="store-tab-link active" data-subtab="inventory" onclick="switchStoreSubTab('inventory')">
+                  <i class="fas fa-boxes"></i> Store Inventory
+                </div>
+                <div class="store-tab-link" data-subtab="requisitions" onclick="switchStoreSubTab('requisitions')">
+                  <i class="fas fa-dolly-flatbed"></i> Material Requisitions
+                  <span class="badge badge-primary store-req-badge" id="store-pending-req-badge" style="display:none; margin-left:4px; font-size:0.65rem; padding:1px 5px; border-radius:99px;">0</span>
+                </div>
+                <div class="store-tab-link" data-subtab="mrr" onclick="switchStoreSubTab('mrr')">
+                  <i class="fas fa-truck-loading"></i> MRR Inward
+                </div>
+                <div class="store-tab-link" data-subtab="wastage" onclick="switchStoreSubTab('wastage')">
+                  <i class="fas fa-trash-alt"></i> Wastage & Scrap
+                </div>
+                <div class="store-tab-link" data-subtab="ledger" onclick="switchStoreSubTab('ledger')">
+                  <i class="fas fa-book"></i> Stock Ledger
+                </div>
+              </div>
+              <button class="store-tab-slider-arrow right" onclick="slideStoreTabs('right')" title="Scroll Right" type="button">
+                <i class="fas fa-chevron-right"></i>
+              </button>
+            </div>
+
+            <!-- Right-Side Slider Drawer Trigger Button -->
+            <button type="button" class="btn btn-sm btn-primary" onclick="openStoreDrawer()" style="font-weight:700; box-shadow:0 2px 8px rgba(37,99,235,0.3); display:inline-flex; align-items:center; gap:0.4rem;" title="ডান সাইড থেকে স্টোর স্লাইডার প্যানেল খুলুন">
+              <i class="fas fa-sliders-h"></i>
+              <span>স্লাইডার ড্রয়ার</span>
+            </button>
+
+            <!-- Collapse / Hide Toggle Button -->
+            <button type="button" class="btn btn-sm btn-outline" id="btn-toggle-store-header" onclick="toggleStoreHeaderCollapse()" title="ট্যাব বার হাইড বা এক্সপ্যান্ড করুন" style="padding:0.4rem 0.65rem; font-size:0.78rem;">
+              <i class="fas fa-compress-alt"></i> <span>হাইড</span>
+            </button>
           </div>
         </div>
 
@@ -647,6 +753,9 @@
                 <i class="fas fa-search search-icon"></i>
                 <input type="text" id="store-search-input" placeholder="Search RM / PM / Supplier..." oninput="loadStoreStock()">
               </div>
+              <button class="btn btn-sm" id="btn-sync-poloxy-rm-pm" onclick="syncMaterialsFromPoloxy()" style="background:#2563eb; color:#fff; font-weight:700; border:none; box-shadow:0 2px 8px rgba(37,99,235,0.35);" title="Pull live RM and PM stock from Poloxy ERP Factory Godown">
+                <i class="fas fa-cloud-download-alt"></i> <span>Poloxy RM-PM লাইভ স্টক সিঙ্ক</span>
+              </button>
               <button class="btn btn-sm btn-success" onclick="openCreateMRRModal()">
                 <i class="fas fa-plus"></i> + MRR Stock Inward
               </button>
@@ -661,6 +770,9 @@
               </button>
               <button class="btn btn-sm btn-danger" onclick="triggerAutoReplenishment()">
                 <i class="fas fa-magic"></i> Auto Replenish
+              </button>
+              <button class="btn btn-sm btn-outline admin-only" onclick="openClearDataModal('store_stock')" style="border-color:var(--danger); color:var(--danger); font-weight:700;" title="Super Admin Store & Stock Cleanup Tool">
+                <i class="fas fa-trash-alt"></i> Reset Stock Data
               </button>
               <div id="store-readonly-tag" class="pill pill-safe" style="display:none; align-items:center; gap:0.4rem; padding:0.4rem 0.85rem; font-size:0.8rem; background:rgba(59, 130, 246, 0.12); border:1px solid rgba(59, 130, 246, 0.3); color:#38bdf8;">
                 <i class="fas fa-eye"></i> Read-Only View (শুধুমাত্র Store টিম ইনভেন্টরি এন্ট্রি ও স্টক ইস্যু করতে পারে)
@@ -786,6 +898,60 @@
               </table>
             </div>
           </div>
+        </div>
+
+        <!-- SUB-TAB 5: STOCK LEDGER (Opening, Inward, Outward, Closing) -->
+        <div id="store-tab-ledger" style="display:none;">
+          <div class="action-bar">
+            <div>
+              <h3 style="font-size:1rem; font-weight:700;"><i class="fas fa-book" style="color:var(--primary);"></i> Material Stock Ledger (ওপেনিং, ইন-আউট ও ক্লোজিং হিসাব)</h3>
+              <p style="font-size:0.75rem; color:var(--text-muted);">Real-time audit log of Opening Stock, Inward (MRR/Sync), Outward (Production Issue), and Closing Balance.</p>
+            </div>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <select id="ledger-material-filter" class="form-control" style="font-size:0.8rem; padding:0.35rem 0.6rem; min-width:200px;" onchange="loadStockLedger()">
+                <option value="">All Materials</option>
+              </select>
+              <button class="btn btn-sm btn-outline" onclick="loadStockLedger()">
+                <i class="fas fa-sync-alt"></i> Refresh Ledger
+              </button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Date & Time</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Opening</th>
+                    <th>Inward (+)</th>
+                    <th>Outward (-)</th>
+                    <th>Closing Stock</th>
+                    <th>Transaction</th>
+                    <th>Ref / Chalan</th>
+                    <th>User</th>
+                  </tr>
+                </thead>
+                <tbody id="store-ledger-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Super Admin Data Clear Danger Zone for Store -->
+        <div class="danger-zone-card admin-only" style="margin-top:2rem;">
+          <div class="danger-zone-header">
+            <i class="fas fa-exclamation-triangle"></i> Super Admin Store & Inventory Data Cleanup Tool
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">
+            Super Admin can selectively delete or reset Store records (RM/PM Current Stock, MRR Inward Entries, Material Requisitions, Wastage, or Stock Ledger).
+          </p>
+          <button class="btn btn-danger" onclick="openClearDataModal('store_stock')">
+            <i class="fas fa-trash-alt"></i> Open Store Data Cleanup Tool
+          </button>
         </div>
       </section>
 
@@ -1626,9 +1792,10 @@
               <tr>
                 <th>Material</th>
                 <th>Type</th>
-                <th>Required</th>
+                <th>Gross Need (BOM)</th>
+                <th>Store Stock (In-Hand)</th>
+                <th>Net Requisition (PR)</th>
                 <th>Issued</th>
-                <th>Store Stock</th>
                 <th>Status</th>
                 <th>Action</th>
               </tr>
@@ -1795,123 +1962,163 @@
     </div>
   </div>
 
-  <!-- Modal: Poloxy ERP Live Sync (Smart Engine with Calendar Date/Range) -->
+  <!-- Modal: Poloxy ERP Live Sync (2-Step Clean Workflow) -->
   <div class="modal-backdrop" id="modal-poloxy-sync">
-    <div class="modal-dialog" style="max-width:520px;">
-      <div class="modal-header">
-        <div class="modal-title" style="display:flex; align-items:center; gap:0.5rem;">
-          <i class="fas fa-sync-alt" style="color:var(--primary);"></i>
-          <span>Pull Production from Poloxy ERP</span>
+    <div class="modal-dialog" style="max-width:560px; max-height:88vh; display:flex; flex-direction:column; overflow:hidden; border-radius:16px;">
+      <div class="modal-header" style="padding:0.9rem 1.25rem; border-bottom:1px solid var(--border-color); flex-shrink:0;">
+        <div>
+          <div class="modal-title" style="display:flex; align-items:center; gap:0.5rem; font-size:1.05rem;">
+            <i class="fas fa-sync-alt" style="color:var(--primary);"></i>
+            <span>Poloxy ERP Live Sync (Pull ERP Data)</span>
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">
+            Real-time Factory Production Output & Godown Stock Sync
+          </div>
         </div>
         <button class="modal-close" onclick="hideModal('modal-poloxy-sync')">&times;</button>
       </div>
-      <form id="form-poloxy-sync" onsubmit="event.preventDefault(); submitPoloxySync();">
-        <div class="modal-body">
-          <!-- Live Engine Parameter Badge (Rules 8 & 9) -->
-          <div style="background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.25); border-radius:8px; padding:0.85rem 1rem; margin-bottom:1.2rem;">
+
+      <form id="form-poloxy-sync" onsubmit="event.preventDefault(); submitPoloxySync();" style="display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; margin:0;">
+        <div class="modal-body" style="padding:1rem 1.25rem; overflow-y:auto; flex:1; min-height:0;">
+          
+          <!-- Selected Unit Banner -->
+          <div style="display:flex; align-items:center; justify-content:space-between; background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.18); border-radius:8px; padding:0.5rem 0.85rem; margin-bottom:0.85rem;">
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <i class="fas fa-industry" style="color:var(--primary); font-size:0.95rem;"></i>
+              <span style="font-size:0.82rem; font-weight:600; color:var(--text-main);">Selected Unit:</span>
+              <span id="poloxy-sync-unit-label" class="badge" style="background:var(--primary); color:#fff; font-size:0.78rem; padding:3px 8px; border-radius:4px; font-weight:700;">Unit 05 (Dry Foods)</span>
+            </div>
+            <span style="font-size:0.72rem; color:var(--success); font-weight:600; display:flex; align-items:center; gap:4px;">
+              <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:#10b981;"></span> Live ERP Connected
+            </span>
+          </div>
+
+          <!-- STEP 1: DATE SELECTION -->
+          <div style="margin-bottom:0.9rem;">
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem;">
-              <span class="pill pill-fast" style="font-size:0.7rem; padding:2px 6px;">⚡ Smart Poloxy Live Engine</span>
-              <span class="pill pill-safe" style="font-size:0.72rem;">Zero Cache • Live Direct</span>
+              <label style="font-weight:700; font-size:0.85rem; color:var(--text-main); display:flex; align-items:center; gap:6px;">
+                <span style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:var(--primary); color:#fff; font-size:0.72rem; font-weight:800;">1</span>
+                Select Date (তারিখ নির্বাচন)
+              </label>
+              <!-- Mode Toggle Link -->
+              <button type="button" id="btn-toggle-date-mode" onclick="toggleSyncDateModeInline()" style="background:none; border:none; color:var(--primary); font-size:0.75rem; font-weight:600; cursor:pointer; text-decoration:underline;">
+                🗓️ Date Range (একাধিক দিন)
+              </button>
             </div>
-            <div style="font-size:0.85rem; font-weight:700; color:var(--text-main);" id="poloxy-sync-unit-label">
-              Unit 05 (Dry Foods)
+
+            <!-- Single Date View (Default) -->
+            <div id="sync-container-single">
+              <div style="display:grid; grid-template-columns: auto auto 1fr; gap:0.45rem; align-items:center;">
+                <button type="button" class="btn btn-outline sync-quick-btn active" id="btn-quick-today" onclick="setSyncQuickDate('today')" style="font-size:0.8rem; padding:0.45rem 0.7rem; font-weight:600;">
+                  📅 Today (আজ)
+                </button>
+                <button type="button" class="btn btn-outline sync-quick-btn" id="btn-quick-yesterday" onclick="setSyncQuickDate('yesterday')" style="font-size:0.8rem; padding:0.45rem 0.7rem;">
+                  📅 Yesterday (গতকাল)
+                </button>
+                <input type="date" class="form-control" id="sync-single-date" style="font-size:0.86rem; font-weight:600; padding:0.4rem 0.6rem;" onchange="onSingleDateChanged()">
+              </div>
             </div>
-            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:3px; line-height:1.4;">
-              <div id="poloxy-sync-wc-label"><strong>Output Work Center (Rule 8):</strong> Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa) [Main Product]</div>
-              <div id="poloxy-sync-godown-label" style="color:var(--primary); font-weight:600; margin-top:2px;">
-                <strong>Opening Stock Godown (Rule 9):</strong> 05. Dry Food Factory Godown [Group: Cut-Up-Part]
+
+            <!-- Date Range View (Hidden by default, toggled via link) -->
+            <div id="sync-container-range" style="display:none; background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:8px; padding:0.65rem 0.75rem; margin-top:0.35rem;">
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.5rem; margin-bottom:0.45rem;">
+                <div>
+                  <label style="font-size:0.73rem; font-weight:600; color:var(--text-muted); display:block; margin-bottom:2px;">From (শুরু):</label>
+                  <input type="date" class="form-control" id="sync-range-from" style="font-size:0.84rem; font-weight:600; padding:0.35rem;">
+                </div>
+                <div>
+                  <label style="font-size:0.73rem; font-weight:600; color:var(--text-muted); display:block; margin-bottom:2px;">To (শেষ):</label>
+                  <input type="date" class="form-control" id="sync-range-to" style="font-size:0.84rem; font-weight:600; padding:0.35rem;">
+                </div>
+              </div>
+              <div style="display:flex; gap:0.35rem;">
+                <button type="button" class="btn btn-xs btn-outline" onclick="setSyncQuickRange('week')">Last 7 Days</button>
+                <button type="button" class="btn btn-xs btn-outline" onclick="setSyncQuickRange('mtd')">Month to Date</button>
+                <button type="button" class="btn btn-xs btn-outline" onclick="setSyncQuickRange('full_month')">Full Month</button>
               </div>
             </div>
           </div>
 
-          <!-- Pull Target Action Selector -->
-          <div class="form-group" style="margin-bottom:1rem;">
-            <label class="form-label" style="font-weight:600; font-size:0.85rem;">Select ERP Extraction Action (কোন ডাটা পুল করবেন):</label>
-            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:0.4rem; margin-top:0.35rem;">
-              <button type="button" class="btn btn-outline sync-action-btn active" id="btn-sync-action-both" onclick="setSyncAction('both')" style="font-size:0.75rem; padding:0.5rem 0.2rem; justify-content:center; text-align:center;">
-                <i class="fas fa-layer-group"></i> Both (ওপেনিং + আউটপুট)
-              </button>
-              <button type="button" class="btn btn-outline sync-action-btn" id="btn-sync-action-opening" onclick="setSyncAction('opening_stock')" style="font-size:0.75rem; padding:0.5rem 0.2rem; justify-content:center; text-align:center;">
-                <i class="fas fa-warehouse"></i> Opening Stock (Rule 9)
-              </button>
-              <button type="button" class="btn btn-outline sync-action-btn" id="btn-sync-action-output" onclick="setSyncAction('actual_output')" style="font-size:0.75rem; padding:0.5rem 0.2rem; justify-content:center; text-align:center;">
-                <i class="fas fa-cogs"></i> Output (Rule 8)
-              </button>
-            </div>
-          </div>
+          <!-- STEP 2: WHAT DATA TO PULL -->
+          <div style="margin-bottom:0.85rem;">
+            <label style="font-weight:700; font-size:0.85rem; color:var(--text-main); display:flex; align-items:center; gap:6px; margin-bottom:0.45rem;">
+              <span style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:var(--primary); color:#fff; font-size:0.72rem; font-weight:800;">2</span>
+              What Data to Pull (কী ডাটা আনবেন?)
+            </label>
 
-          <!-- Date Mode Selector: Single Date vs Date Range -->
-          <div class="form-group" style="margin-bottom:1rem;">
-            <label class="form-label" style="font-weight:600; font-size:0.85rem;">Date Selection Mode (তারিখ নির্বাচন মোড):</label>
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.6rem; margin-top:0.35rem;">
-              <button type="button" class="btn btn-outline sync-mode-btn active" id="btn-sync-mode-single" onclick="setSyncDateMode('single')" style="justify-content:center; gap:0.4rem; padding:0.55rem;">
-                <i class="fas fa-calendar-day"></i> Single Date (নির্দিষ্ট দিন)
-              </button>
-              <button type="button" class="btn btn-outline sync-mode-btn" id="btn-sync-mode-range" onclick="setSyncDateMode('range')" style="justify-content:center; gap:0.4rem; padding:0.55rem;">
-                <i class="fas fa-calendar-week"></i> Date Range (তারিখের পরিসর)
-              </button>
-            </div>
-          </div>
+            <!-- 3 Clean Radio Option Cards -->
+            <div style="display:flex; flex-direction:column; gap:0.4rem;">
+              <!-- Option 1: Actual Production Output (Recommended - Ultra Fast 3s) -->
+              <div class="sync-option-card active" id="card-sync-output" onclick="setSyncAction('actual_output')" style="border:2px solid var(--primary); background:rgba(59,130,246,0.06); border-radius:8px; padding:0.55rem 0.8rem; cursor:pointer; display:flex; align-items:flex-start; gap:0.6rem; transition:all 0.15s;">
+                <input type="radio" name="sync_action_radio" id="radio-sync-output" value="actual_output" checked style="margin-top:3px; accent-color:var(--primary);">
+                <div style="flex:1;">
+                  <div style="font-size:0.84rem; font-weight:700; color:var(--text-main); display:flex; align-items:center; gap:6px;">
+                    <span>🏭 Actual Production Output (লাইভ উৎপাদন - ৩ সেকেন্ডে সিঙ্ক)</span>
+                    <span class="badge" style="background:#10b981; color:#fff; font-size:0.66rem; padding:1px 5px; border-radius:3px;">Recommended</span>
+                  </div>
+                  <div style="font-size:0.73rem; color:var(--text-muted); margin-top:2px; line-height:1.3;">
+                    Pulls actual finished cartons produced from factory work centers (Pound Cake, Milk Bread, Sandwich Bread, etc.).
+                  </div>
+                </div>
+              </div>
 
-          <!-- 1. Single Date Picker Container -->
-          <div id="sync-container-single" style="margin-bottom:1rem;">
-            <div class="form-group">
-              <label class="form-label">Select Production Date (প্রোডাকশনের তারিখ):</label>
-              <div style="display:flex; gap:0.5rem; align-items:center;">
-                <input type="date" class="form-control" id="sync-single-date" style="font-size:0.95rem; font-weight:600;" onchange="updateRule9DateHelper()">
-                <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickDate('today')" style="white-space:nowrap;">Today</button>
-                <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickDate('yesterday')" style="white-space:nowrap;">Yesterday</button>
+              <!-- Option 2: Full Sync: Output + Opening Stock -->
+              <div class="sync-option-card" id="card-sync-both" onclick="setSyncAction('both')" style="border:1px solid var(--border-color); background:var(--card-bg); border-radius:8px; padding:0.5rem 0.8rem; cursor:pointer; display:flex; align-items:flex-start; gap:0.6rem; transition:all 0.15s;">
+                <input type="radio" name="sync_action_radio" id="radio-sync-both" value="both" style="margin-top:3px; accent-color:var(--primary);">
+                <div style="flex:1;">
+                  <div style="font-size:0.83rem; font-weight:700; color:var(--text-main);">
+                    🌟 Full Sync: Actual Output + Opening Stock
+                  </div>
+                  <div style="font-size:0.72rem; color:var(--text-muted); margin-top:1px;">
+                    Pulls actual production output and godown opening balance together.
+                  </div>
+                </div>
               </div>
-            </div>
-            <!-- Dynamic Rule 9 Explanation Helper -->
-            <div id="rule9-date-helper-box" style="background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; padding:0.55rem 0.75rem; margin-top:0.4rem; font-size:0.75rem; line-height:1.4;">
-              <div style="font-weight:700; color:#b45309; display:flex; align-items:center; gap:4px;">
-                <i class="fas fa-info-circle"></i> Rule 9 Opening Stock Extraction Logic:
-              </div>
-              <div id="rule9-date-text" style="color:var(--text-main); margin-top:2px;">
-                পরিকল্পিত তারিখ: <strong id="r9-target-date">24-Oct-2026</strong>-এর জন্য Poloxy গোডাউন থেকে <strong id="r9-prev-date">23-Oct-2026</strong>-এর <strong>Closing Stock</strong> (অথবা <strong id="r9-target-date-2">24-Oct-2026</strong>-এর <strong>Opening Stock</strong>) ইন-হ্যান্ড ব্যালেন্স হিসেবে নেওয়া হবে।
-              </div>
-            </div>
-          </div>
 
-          <!-- 2. Date Range Picker Container -->
-          <div id="sync-container-range" style="display:none; margin-bottom:1rem;">
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.75rem;">
-              <div class="form-group">
-                <label class="form-label">From Date (শুরুর তারিখ):</label>
-                <input type="date" class="form-control" id="sync-range-from" style="font-size:0.9rem; font-weight:600;">
-              </div>
-              <div class="form-group">
-                <label class="form-label">To Date (শেষের তারিখ):</label>
-                <input type="date" class="form-control" id="sync-range-to" style="font-size:0.9rem; font-weight:600;">
-              </div>
-            </div>
-            <div style="display:flex; gap:0.4rem; margin-top:0.4rem;">
-              <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickRange('week')">Last 7 Days</button>
-              <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickRange('mtd')">Month to Date</button>
-              <button type="button" class="btn btn-sm btn-outline" onclick="setSyncQuickRange('full_month')">Full Month</button>
-            </div>
-          </div>
-
-          <!-- Smart Engine Options (Guarantees Fresh Data & No Cache) -->
-          <div style="background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:8px; padding:0.75rem; font-size:0.78rem;">
-            <div style="display:flex; align-items:flex-start; gap:0.5rem;">
-              <i class="fas fa-bolt" style="color:var(--warning); margin-top:2px;"></i>
-              <div>
-                <strong>Smart Engine Real-Time Policy (ক্যাশ ছাড়া সরাসরি লাইভ এক্সট্র্যাকশন):</strong>
-                <div style="color:var(--text-muted); margin-top:2px;">
-                  কোনো ব্রাউজার ক্যাশ বা পূর্ববর্তী ডাটা ব্যবহার হবে না। Poloxy ERP-এর লাইভ সার্ভার থেকে সরাসরি রিয়েলটাইমে নির্বাচিত তারিখের প্রোডাকশন আউটপুট এক্সট্র্যাক্ট করা হবে।
+              <!-- Option 3: Opening Stock Only -->
+              <div class="sync-option-card" id="card-sync-opening" onclick="setSyncAction('opening_stock')" style="border:1px solid var(--border-color); background:var(--card-bg); border-radius:8px; padding:0.5rem 0.8rem; cursor:pointer; display:flex; align-items:flex-start; gap:0.6rem; transition:all 0.15s;">
+                <input type="radio" name="sync_action_radio" id="radio-sync-opening" value="opening_stock" style="margin-top:3px; accent-color:var(--primary);">
+                <div style="flex:1;">
+                  <div style="font-size:0.83rem; font-weight:700; color:var(--text-main);">
+                    📦 Opening Stock Only (শুধুমাত্র ওপেনিং স্টক)
+                  </div>
+                  <div style="font-size:0.72rem; color:var(--text-muted); margin-top:1px;">
+                    Pulls warehouse closing balance as starting stock (production output remains unchanged).
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          <div id="sync-status-msg" style="margin-top:0.75rem; font-size:0.82rem; display:none;"></div>
+          <!-- Clear 1-Sentence Summary Helper -->
+          <div id="sync-friendly-summary" style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:8px; padding:0.5rem 0.8rem; font-size:0.77rem; line-height:1.4; color:var(--text-main); margin-bottom:0.7rem;">
+            💡 <strong>Action:</strong> Poloxy ERP live server will synchronize <strong id="sync-friendly-date-label">selected date</strong> production & stock in real-time.
+          </div>
+
+          <!-- Collapsible Technical Mapping Details (Hidden by default) -->
+          <details style="background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:6px; padding:0.35rem 0.65rem; font-size:0.73rem; color:var(--text-muted);">
+            <summary style="cursor:pointer; font-weight:600; color:var(--text-main); user-select:none;">
+              ⚙️ Technical Details & ERP Mapping (কারিগরি ডিটেইলস)
+            </summary>
+            <div style="margin-top:0.4rem; padding-top:0.4rem; border-top:1px dashed var(--border-color); font-size:0.71rem; line-height:1.4;">
+              <div id="poloxy-sync-wc-label"><strong>Work Center:</strong> Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa) [All WCs]</div>
+              <div id="poloxy-sync-godown-label" style="margin-top:2px;"><strong>Factory Godown:</strong> 05. Dry Food Factory Godown [ID: G14]</div>
+              <div style="margin-top:3px; color:#b45309;">
+                <i class="fas fa-info-circle"></i> Direct live query to Poloxy ERP database — no cache or mock data.
+              </div>
+            </div>
+          </details>
+
+          <!-- Status Message Area -->
+          <div id="sync-status-msg" style="margin-top:0.65rem; font-size:0.8rem; display:none;"></div>
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-outline" onclick="hideModal('modal-poloxy-sync')">Cancel</button>
-          <button type="submit" class="btn btn-primary" id="btn-submit-erp-sync">
-            <i class="fas fa-cloud-download-alt"></i> Pull Live ERP Data
+
+        <div class="modal-footer" style="padding:0.75rem 1.25rem; border-top:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center; flex-shrink:0; background:var(--bg-secondary);">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-poloxy-sync')" style="font-size:0.85rem;">
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-primary" id="btn-submit-erp-sync" style="font-size:0.88rem; font-weight:700; padding:0.5rem 1.2rem; display:flex; align-items:center; gap:0.5rem; background:#2563eb; border-color:#2563eb; box-shadow:0 2px 6px rgba(37,99,235,0.35);">
+            <i class="fas fa-cloud-download-alt"></i> <span>Pull ERP Data Now</span>
           </button>
         </div>
       </form>
@@ -2293,6 +2500,66 @@
     </div>
   </div>
 
+  <!-- Modal: Upload Preview (dry-run -> confirm) -->
+  <div class="modal-backdrop" id="modal-upload-preview">
+    <div class="modal-dialog modal-lg" style="max-width:960px; width:96%;">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-search" style="color:var(--primary);"></i> <span id="upload-preview-title">Upload Preview</span> — যাচাই করে কনফার্ম করুন</div>
+        <button class="modal-close" onclick="cancelUploadPreview()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="upload-preview-summary" class="up-summary"></div>
+        <div id="upload-preview-note" class="up-note"></div>
+        <div id="upload-preview-table" class="up-scroll"></div>
+        <div class="up-note"><i class="fas fa-info-circle"></i> এখনো কিছু সেভ হয়নি। লাল (ভুল) সারি বাদ যাবে; হলুদ (সতর্ক) সারি প্রয়োগ হবে — দেখে নিন।</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="cancelUploadPreview()">বাতিল</button>
+        <button type="button" class="btn btn-primary" id="upload-preview-confirm" onclick="confirmUploadPreview()">কনফার্ম</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Import Actual Output from Poloxy report -->
+  <div class="modal-backdrop" id="modal-output-import">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-file-import" style="color:var(--success);"></i> Poloxy থেকে Actual Output ইম্পোর্ট</div>
+        <button class="modal-close" onclick="hideModal('modal-output-import')">&times;</button>
+      </div>
+      <form onsubmit="event.preventDefault(); submitOutputImport();">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Poloxy-র Output/Production রিপোর্ট (Excel বা CSV):</label>
+            <div class="file-upload-box" onclick="document.getElementById('output-import-file').click()">
+              <div class="file-upload-icon"><i class="fas fa-file-excel"></i></div>
+              <div id="output-import-file-label" style="font-weight:600; color:var(--text-main);">Click to browse Poloxy output report (.xlsx / .csv)</div>
+              <input type="file" id="output-import-file" accept=".xlsx,.csv" style="display:none;" onchange="document.getElementById('output-import-file-label').textContent = this.files[0] ? this.files[0].name : 'Click to browse'">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">রিপোর্টের পরিমাণ কোন এককে?</label>
+            <select class="form-control" id="output-import-unit">
+              <option value="pcs">প্যাকেট / পিস (কার্টনে অটো কনভার্ট হবে)</option>
+              <option value="ctn">কার্টন</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">তারিখ (রিপোর্টে Date কলাম না থাকলে এটি ধরা হবে):</label>
+            <input type="date" class="form-control" id="output-import-date">
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-dim);">
+            <i class="fas fa-info-circle"></i> রিপোর্টে Item/SKU Code (বা Item Name) ও Output/Quantity কলাম থাকতে হবে। একই রিপোর্ট আবার ইম্পোর্ট করলে সংখ্যা দ্বিগুণ হবে না। পরের ধাপে প্রিভিউ দেখে কনফার্ম করবেন।
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-output-import')">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i> প্রিভিউ দেখুন</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal: Super Admin Data Clear & Reset Tool -->
   <div class="modal-backdrop" id="modal-clear-data">
     <div class="modal-dialog">
@@ -2303,16 +2570,20 @@
       <form id="form-clear-data" onsubmit="event.preventDefault(); submitClearData();">
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Select Section / Tab to Clear:</label>
+            <label class="form-label">Select Section to Clear / Reset:</label>
             <select class="form-control" id="clear-data-section">
-              <option value="forecast">📈 Sales Forecast Data Only</option>
-              <option value="production">⚙️ Production Plans & Requisitions</option>
-              <option value="requisitions">📋 Material Requisitions Only</option>
-              <option value="mrr">🚚 MRR Stock Inward Entries Only</option>
-              <option value="wastage">🗑️ Wastage & Scrap Logs Only</option>
+              <option value="forecast">📈 Sales Forecast Data</option>
+              <option value="production">⚙️ Production Plans & Targets</option>
+              <option value="actual_output">🏭 Reset Actual Output to 0</option>
+              <option value="production_target_only">🎯 Reset Plan Targets to 0</option>
+              <option value="requisitions">📋 Material Requisitions</option>
+              <option value="store_stock">📦 Store Stock (Reset Stock, Floor, Safety Stock & In-Transit to 0)</option>
+              <option value="mrr">🚚 Store MRR Inward Entries</option>
+              <option value="wastage">🗑️ Store Wastage & Scrap Logs</option>
+              <option value="store_txns">📜 Store Stock Ledger / Audit Logs</option>
+              <option value="store_all">🏢 ALL Store Data (Stock Reset + MRR + Wastage + Txns)</option>
               <option value="procurement">🛒 Purchase Requisitions (PO)</option>
-              <option value="store_txns">📜 Historical Store Audit Transactions</option>
-              <option value="all">⚠️ ALL OPERATIONAL DATA (Forecast + Production + Store + MRR + Wastage)</option>
+              <option value="all">⚠️ ALL Operational Data (Full Wipe)</option>
             </select>
           </div>
 
@@ -2329,8 +2600,8 @@
           <div class="form-group">
             <label class="form-label">Date Filter Mode:</label>
             <select class="form-control" id="clear-data-range-type" onchange="document.getElementById('clear-date-pickers').style.display = this.value === 'custom' ? 'grid' : 'none';">
-              <option value="all">Wipe All Data for Selected Section (সম্পূর্ণ মুছুন)</option>
-              <option value="custom">Clear by Specific Date Range (নির্দিষ্ট তারিখ অনুযায়ী)</option>
+              <option value="all">Wipe All Records for Selected Section</option>
+              <option value="custom">Clear by Specific Date Range</option>
             </select>
           </div>
 
@@ -2345,11 +2616,17 @@
             </div>
           </div>
 
-          <div style="background:rgba(239, 68, 68, 0.1); border:1px solid rgba(239, 68, 68, 0.3); border-radius:0.5rem; padding:0.85rem; margin-top:1rem;">
-            <label class="form-label" style="color:var(--danger); font-weight:700;">
-              Safety Confirmation: Type <span style="background:#000; color:#fff; padding:2px 6px; border-radius:3px;">DELETE</span> below:
-            </label>
-            <input type="text" class="form-control" id="clear-data-confirm-input" placeholder="Type DELETE to confirm" required style="border-color:var(--danger); font-weight:700;">
+          <!-- Optional Backup Option -->
+          <div style="background:var(--bg-subtle); border:1px solid var(--card-border); border-radius:0.5rem; padding:0.85rem; margin-top:0.85rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+              <label style="display:flex; align-items:center; gap:0.55rem; font-size:0.82rem; font-weight:600; cursor:pointer; margin-bottom:0; color:var(--text-main);">
+                <input type="checkbox" id="clear-data-backup-toggle" style="width:16px; height:16px; cursor:pointer; accent-color:var(--primary);">
+                <span>Download backup file before deleting (Optional)</span>
+              </label>
+              <button type="button" class="btn btn-sm btn-outline" onclick="downloadBackupFile()" style="font-size:0.72rem; padding:2px 8px;" title="Manual Backup">
+                <i class="fas fa-download"></i> Manual Backup
+              </button>
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -2408,8 +2685,7 @@
     </div>
   </div>
 
-  <div class="toast-container" id="toast-container"></div>
-  <script src="/static/js/portal.js"></script>
+  <script src="/static/js/portal.js?v=20261028_v1"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -2599,6 +2875,130 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-outline" onclick="hideModal('modal-forecast-revisions')">Close</button>
       </div>
+    </div>
+  </div>
+  <!-- ================= GLOBAL ACTION CENTER SLIDE-OUT DRAWER ================= -->
+  <div class="drawer-backdrop" id="action-drawer-backdrop" onclick="closeActionDrawer()"></div>
+  <aside class="action-drawer" id="action-center-drawer">
+    <div class="drawer-header">
+      <div>
+        <div class="drawer-title">
+          <i class="fas fa-bolt" style="color:var(--warning);"></i> 
+          <span>আজকের অ্যাকশন সেন্টার (Action Center)</span>
+          <span class="badge" id="drawer-total-count" style="background:var(--danger); color:#fff; font-size:0.7rem; padding:2px 7px; border-radius:99px; margin-left:6px;">0</span>
+        </div>
+        <div class="drawer-subtitle" id="drawer-user-info">রোল: - • আজ কোনো কাজ বাকি নেই</div>
+      </div>
+      <button class="drawer-close-btn" onclick="closeActionDrawer()">&times;</button>
+    </div>
+
+    <!-- Filter Pills inside Drawer -->
+    <div class="drawer-filter-bar" id="drawer-filter-tabs">
+      <!-- Injected via JavaScript -->
+    </div>
+
+    <!-- Tasks List inside Drawer -->
+    <div class="drawer-body" id="drawer-tasks-list">
+      <!-- Injected via JavaScript -->
+    </div>
+
+    <div class="drawer-footer">
+      <button class="btn btn-sm btn-outline" onclick="loadMyTasks()" style="width:100%; display:flex; align-items:center; justify-content:center; gap:0.4rem;">
+        <i class="fas fa-sync-alt"></i> রিফ্রেশ করুন
+      </button>
+    </div>
+  </aside>
+
+  <!-- ================= STORE NAVIGATION RIGHT-SIDE SLIDE DRAWER ================= -->
+  <div class="drawer-backdrop" id="store-drawer-backdrop" onclick="closeStoreDrawer()"></div>
+  <aside class="action-drawer" id="store-navigation-drawer" style="width:380px;">
+    <div class="drawer-header" style="background:var(--bg-tertiary);">
+      <div>
+        <div class="drawer-title">
+          <i class="fas fa-warehouse text-primary"></i>
+          <span>স্টোর স্লাইডার মেনু (Store Drawer)</span>
+        </div>
+        <div class="drawer-subtitle">ডান পাশের স্লাইড মেনু থেকে যেকোনো স্টোর সেকশনে যান</div>
+      </div>
+      <button class="drawer-close-btn" onclick="closeStoreDrawer()">&times;</button>
+    </div>
+
+    <div class="drawer-body" style="padding:1rem; display:flex; flex-direction:column; gap:0.75rem;">
+      <!-- 5 Interactive Store Navigation Cards -->
+      <div class="store-drawer-item active" id="drawer-card-inventory" onclick="selectDrawerStoreTab('inventory')">
+        <div class="sdi-icon" style="background:rgba(37,99,235,0.12); color:var(--primary);"><i class="fas fa-boxes"></i></div>
+        <div class="sdi-content">
+          <div class="sdi-title">Store Inventory & Stock</div>
+          <div class="sdi-desc">Factory godown stock, floor WIP & safety buffers</div>
+        </div>
+        <span class="badge" style="background:var(--primary); color:#fff; font-size:0.68rem;">Open</span>
+      </div>
+
+      <div class="store-drawer-item" id="drawer-card-requisitions" onclick="selectDrawerStoreTab('requisitions')">
+        <div class="sdi-icon" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas fa-dolly-flatbed"></i></div>
+        <div class="sdi-content">
+          <div class="sdi-title">Material Requisitions</div>
+          <div class="sdi-desc">Production floor requisitions & stock issuance</div>
+        </div>
+        <span class="badge" id="drawer-store-req-badge" style="background:#10b981; color:#fff; font-size:0.68rem;">0 Pending</span>
+      </div>
+
+      <div class="store-drawer-item" id="drawer-card-mrr" onclick="selectDrawerStoreTab('mrr')">
+        <div class="sdi-icon" style="background:rgba(245,158,11,0.12); color:#f59e0b;"><i class="fas fa-truck-loading"></i></div>
+        <div class="sdi-content">
+          <div class="sdi-title">MRR Inward Register</div>
+          <div class="sdi-desc">Goods receipt notes, chalans & supplier deliveries</div>
+        </div>
+        <span class="badge" style="background:#f59e0b; color:#fff; font-size:0.68rem;">Inward</span>
+      </div>
+
+      <div class="store-drawer-item" id="drawer-card-wastage" onclick="selectDrawerStoreTab('wastage')">
+        <div class="sdi-icon" style="background:rgba(239,68,68,0.12); color:var(--danger);"><i class="fas fa-trash-alt"></i></div>
+        <div class="sdi-content">
+          <div class="sdi-title">Wastage & Scrap Register</div>
+          <div class="sdi-desc">Process waste, breakdown damages & scrap logs</div>
+        </div>
+        <span class="badge" style="background:var(--danger); color:#fff; font-size:0.68rem;">Scrap</span>
+      </div>
+
+      <div class="store-drawer-item" id="drawer-card-ledger" onclick="selectDrawerStoreTab('ledger')">
+        <div class="sdi-icon" style="background:rgba(139,92,246,0.12); color:#8b5cf6;"><i class="fas fa-book"></i></div>
+        <div class="sdi-content">
+          <div class="sdi-title">Stock Ledger & Audit Logs</div>
+          <div class="sdi-desc">Real-time Opening, In, Out & Closing stock balance</div>
+        </div>
+        <span class="badge" style="background:#8b5cf6; color:#fff; font-size:0.68rem;">Audit</span>
+      </div>
+    </div>
+
+    <div class="drawer-footer" style="padding:0.85rem 1.25rem; background:var(--bg-tertiary); display:flex; flex-direction:column; gap:0.5rem;">
+      <button class="btn btn-sm btn-primary" onclick="syncMaterialsFromPoloxy(); closeStoreDrawer();" style="width:100%; font-weight:700;">
+        <i class="fas fa-cloud-download-alt"></i> Poloxy RM-PM লাইভ স্টক সিঙ্ক
+      </button>
+      <button class="btn btn-sm btn-outline" onclick="openClearDataModal('store_stock'); closeStoreDrawer();" style="width:100%; border-color:var(--danger); color:var(--danger); font-weight:700;">
+        <i class="fas fa-trash-alt"></i> Reset Stock Data
+      </button>
+    </div>
+  </aside>
+
+  <!-- ================= DELETION FLASH ANIMATION OVERLAY ================= -->
+  <div class="delete-overlay-backdrop" id="delete-animation-overlay">
+    <div class="delete-card">
+      <div class="delete-icon-pulse" id="del-anim-icon">
+        <i class="fas fa-trash-alt" id="del-anim-glyph"></i>
+      </div>
+      <h3 id="del-anim-title" style="font-size:1.15rem; font-weight:700; color:var(--text-main); margin-bottom:0.45rem;">
+        Deleting Data...
+      </h3>
+      <p id="del-anim-subtitle" style="font-size:0.82rem; color:var(--text-muted); line-height:1.45; margin-bottom:0.25rem;">
+        Removing selected records from database, please wait...
+      </p>
+      <div class="delete-progress-bar-wrap">
+        <div class="delete-progress-bar" id="del-anim-bar"></div>
+      </div>
+      <span id="del-anim-status" style="font-size:0.75rem; color:var(--text-dim); margin-top:0.35rem;">
+        Cleanup in progress...
+      </span>
     </div>
   </div>
 

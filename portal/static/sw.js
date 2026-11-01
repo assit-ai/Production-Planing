@@ -1,8 +1,5 @@
-const CACHE_NAME = 'paragon-plan-v1';
+const CACHE_NAME = 'paragon-plan-v9';
 const ASSETS = [
-  '/',
-  '/static/css/portal.css',
-  '/static/js/portal.js',
   '/manifest.json',
   '/static/favicon.ico',
   '/static/apple-touch-icon.png',
@@ -18,9 +15,7 @@ self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys().then((keys) => {
       return Promise.all(
-        keys.map((key) => {
-          if (key !== CACHE_NAME) return caches.delete(key);
-        })
+        keys.map((key) => caches.delete(key))
       );
     }).then(() => clients.claim())
   );
@@ -35,7 +30,14 @@ self.addEventListener('fetch', (e) => {
     );
     return;
   }
+  // Static assets: network-first so deployed JS/CSS updates are picked up; cache as offline fallback
   e.respondWith(
-    caches.match(e.request).then((cached) => cached || fetch(e.request))
+    fetch(e.request).then((resp) => {
+      if (resp && resp.ok) {
+        const copy = resp.clone();
+        caches.open(CACHE_NAME).then((c) => c.put(e.request, copy));
+      }
+      return resp;
+    }).catch(() => caches.match(e.request))
   );
 });

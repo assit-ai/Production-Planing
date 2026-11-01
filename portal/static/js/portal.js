@@ -51,7 +51,9 @@ const AppState = {
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
+  initCurrentPeriod();
   initTheme();
+  initWorkflowBarState();
   initNavigation();
   const isLoggedIn = await initCurrentUser();
   if (isLoggedIn) {
@@ -59,6 +61,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadDashboard();
   }
 });
+
+// ----------------- GUIDED WORKFLOW BAR TOGGLE (COLLAPSE / EXPAND) -----------------
+function toggleWorkflowBar() {
+  const content = document.getElementById('workflow-steps-content');
+  const icon = document.getElementById('workflow-toggle-icon');
+  const label = document.getElementById('workflow-toggle-label');
+  const badge = document.getElementById('workflow-collapsed-badge');
+  if (!content) return;
+
+  const isHidden = content.style.display === 'none';
+  if (isHidden) {
+    content.style.display = 'flex';
+    if (icon) icon.className = 'fas fa-chevron-up';
+    if (label) label.textContent = 'হাইড করুন';
+    if (badge) badge.style.display = 'none';
+    localStorage.setItem('workflow_bar_collapsed', 'false');
+  } else {
+    content.style.display = 'none';
+    if (icon) icon.className = 'fas fa-chevron-down';
+    if (label) label.textContent = 'এক্সপ্যান্ড করুন';
+    if (badge) badge.style.display = 'inline-block';
+    localStorage.setItem('workflow_bar_collapsed', 'true');
+  }
+}
+
+function initWorkflowBarState() {
+  const isCollapsed = localStorage.getItem('workflow_bar_collapsed') === 'true';
+  const content = document.getElementById('workflow-steps-content');
+  const icon = document.getElementById('workflow-toggle-icon');
+  const label = document.getElementById('workflow-toggle-label');
+  const badge = document.getElementById('workflow-collapsed-badge');
+
+  if (isCollapsed && content) {
+    content.style.display = 'none';
+    if (icon) icon.className = 'fas fa-chevron-down';
+    if (label) label.textContent = 'এক্সপ্যান্ড করুন';
+    if (badge) badge.style.display = 'inline-block';
+  }
+}
 
 // ----------------- THEME CONTROLLER -----------------
 function initTheme() {
@@ -394,6 +435,8 @@ function applyRolePermissions() {
     if (isSuper) {
       if (el.classList.contains('nav-item')) {
         el.style.setProperty('display', 'flex', 'important');
+      } else if (el.tagName === 'BUTTON' || el.tagName === 'A') {
+        el.style.setProperty('display', 'inline-flex', 'important');
       } else {
         el.style.setProperty('display', 'block', 'important');
       }
@@ -600,6 +643,7 @@ function switchView(viewName, subOptions = {}) {
 
 // ----------------- 1. DASHBOARD CONTROLLER -----------------
 async function loadDashboard() {
+  loadMyTasks();
   const cat = AppState.selectedCategory;
   const month = AppState.selectedMonth;
   const uom = AppState.displayUOM;
@@ -630,6 +674,13 @@ async function loadDashboard() {
 
     const prodReqBadge = document.getElementById('badge-prod-req');
     if (prodReqBadge) prodReqBadge.textContent = stats.requisitions.pending_production;
+
+    const storeReqBadge = document.getElementById('store-pending-req-badge');
+    if (storeReqBadge) {
+      const pMR = stats.requisitions?.pending_production || 0;
+      storeReqBadge.textContent = pMR;
+      storeReqBadge.style.display = pMR > 0 ? 'inline-block' : 'none';
+    }
 
     const poBadge = document.getElementById('badge-po-req');
     if (poBadge) poBadge.textContent = stats.requisitions.pending_purchase;
@@ -1378,11 +1429,11 @@ function renderProductionPlans(plans) {
         </td>
         <td>
           <div style="display:flex; gap:0.35rem;">
-            ${canUserEdit('production') ? `
-              <button class="btn btn-sm btn-outline" title="Update Output" onclick="openUpdateOutputModal(${p.id}, '${p.plan_no}', ${p.planned_ctn}, ${p.actual_produced_ctn})">
+            ${isSuperAdminUser() ? `
+              <button class="btn btn-sm btn-outline" title="Manual correction (Super Admin only)" onclick="openUpdateOutputModal(${p.id}, '${p.plan_no}', ${p.planned_ctn}, ${p.actual_produced_ctn})">
                 <i class="fas fa-edit"></i> Output
               </button>
-            ` : `<span class="pill pill-safe" style="font-size:0.7rem;"><i class="fas fa-lock"></i> Read Only</span>`}
+            ` : `<span class="pill pill-safe" style="font-size:0.7rem;" title="Actual output Poloxy report থেকে আসে"><i class="fas fa-link"></i> Poloxy</span>`}
           </div>
         </td>
       </tr>
@@ -1422,20 +1473,17 @@ function openPoloxySyncModal() {
   const godownLabel = document.getElementById('poloxy-sync-godown-label');
   if (godownLabel) godownLabel.innerHTML = `<strong>Opening Stock Godown (Rule 9):</strong> ${godowns[cat] || '05. Dry Food Factory Godown [Group: Cut-Up-Part]'}`;
 
-  // Default date setup
-  const today = new Date().toISOString().split('T')[0];
-  const sDate = document.getElementById('sync-single-date');
+  // Default date setup to Today
+  setSyncDateMode('single');
+  setSyncQuickDate('today');
+
   const rFrom = document.getElementById('sync-range-from');
   const rTo = document.getElementById('sync-range-to');
-
-  if (sDate) {
-    sDate.value = today;
-    updateRule9DateHelper();
-  }
+  const today = new Date().toISOString().split('T')[0];
   if (rFrom) rFrom.value = `${AppState.selectedMonth}-01`;
   if (rTo) rTo.value = today;
 
-  setSyncDateMode('single');
+  setSyncAction('actual_output');
 
   const statusMsg = document.getElementById('sync-status-msg');
   if (statusMsg) {
@@ -1446,7 +1494,7 @@ function openPoloxySyncModal() {
   const btn = document.getElementById('btn-submit-erp-sync');
   if (btn) {
     btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> Pull Live ERP Data';
+    btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> <span>Poloxy ERP থেকে ডাটা আনুন (Pull Data Now)</span>';
   }
 
   showModal('modal-poloxy-sync');
@@ -1454,40 +1502,60 @@ function openPoloxySyncModal() {
 
 function updateRule9DateHelper() {
   const sDate = document.getElementById('sync-single-date');
-  const cat = AppState.selectedCategory;
-  const godownsShort = {
-    '05': '05. Dry Food Factory Godown',
-    '02': '02. Frozen Foods Factory Godown',
-    '01': '01. Process Chicken Factory Godown',
-    'ALL': 'Factory Godown'
-  };
-  const gName = godownsShort[cat] || 'Factory Godown';
-  const textEl = document.getElementById('rule9-date-text');
-
+  const friendlyLabel = document.getElementById('sync-friendly-date-label');
   if (!sDate || !sDate.value) return;
   try {
     const parts = sDate.value.split('-');
     const td = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-    const pd = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-    pd.setDate(pd.getDate() - 1);
-    const fmtTarget = td.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-    const fmtPrev = pd.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-    if (textEl) {
-      textEl.innerHTML = `পরিকল্পিত তারিখ: <strong>${fmtTarget}</strong> এর জন্য <strong>${gName}</strong> [Cut-Up-Part] থেকে <strong>${fmtPrev}</strong>-এর <strong>Closing Stock</strong> (অথবা <strong>${fmtTarget}</strong>-এর <strong>Opening Stock</strong>) ইন-হ্যান্ড ব্যালেন্স হিসেবে নেওয়া হবে।`;
+    const formatted = td.toLocaleDateString('bn-BD', { day: 'numeric', month: 'long', year: 'numeric' });
+    const fmtEn = td.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    
+    const todayStr = new Date().toISOString().split('T')[0];
+    const yest = new Date();
+    yest.setDate(yest.getDate() - 1);
+    const yestStr = yest.toISOString().split('T')[0];
+
+    let prefix = '';
+    if (sDate.value === todayStr) prefix = 'আজকের ';
+    else if (sDate.value === yestStr) prefix = 'গতকালকের ';
+
+    if (friendlyLabel) {
+      friendlyLabel.textContent = `${prefix}(${formatted} / ${fmtEn})`;
     }
   } catch (e) {}
 }
 
+function onSingleDateChanged() {
+  const sDate = document.getElementById('sync-single-date');
+  if (!sDate) return;
+  const todayStr = new Date().toISOString().split('T')[0];
+  const yest = new Date();
+  yest.setDate(yest.getDate() - 1);
+  const yestStr = yest.toISOString().split('T')[0];
+
+  const btnToday = document.getElementById('btn-quick-today');
+  const btnYest = document.getElementById('btn-quick-yesterday');
+  if (btnToday) btnToday.classList.toggle('active', sDate.value === todayStr);
+  if (btnYest) btnYest.classList.toggle('active', sDate.value === yestStr);
+
+  updateRule9DateHelper();
+}
+
+function toggleSyncDateModeInline() {
+  const newMode = (syncDateMode === 'single') ? 'range' : 'single';
+  setSyncDateMode(newMode);
+}
+
 function setSyncDateMode(mode) {
   syncDateMode = mode;
-  const btnSingle = document.getElementById('btn-sync-mode-single');
-  const btnRange = document.getElementById('btn-sync-mode-range');
+  const toggleBtn = document.getElementById('btn-toggle-date-mode');
   const boxSingle = document.getElementById('sync-container-single');
   const boxRange = document.getElementById('sync-container-range');
 
-  if (btnSingle && btnRange) {
-    btnSingle.classList.toggle('active', mode === 'single');
-    btnRange.classList.toggle('active', mode === 'range');
+  if (toggleBtn) {
+    toggleBtn.innerHTML = (mode === 'single') 
+      ? '🗓️ একাধিক দিন (Date Range)' 
+      : '📅 একক দিন (Single Date)';
   }
 
   if (boxSingle) boxSingle.style.display = (mode === 'single') ? 'block' : 'none';
@@ -1499,12 +1567,16 @@ function setSyncQuickDate(type) {
   const sDate = document.getElementById('sync-single-date');
   if (!sDate) return;
   const d = new Date();
-  if (type === 'today') {
-    sDate.value = d.toISOString().split('T')[0];
-  } else if (type === 'yesterday') {
+  if (type === 'yesterday') {
     d.setDate(d.getDate() - 1);
-    sDate.value = d.toISOString().split('T')[0];
   }
+  sDate.value = d.toISOString().split('T')[0];
+
+  const btnToday = document.getElementById('btn-quick-today');
+  const btnYest = document.getElementById('btn-quick-yesterday');
+  if (btnToday) btnToday.classList.toggle('active', type === 'today');
+  if (btnYest) btnYest.classList.toggle('active', type === 'yesterday');
+
   updateRule9DateHelper();
 }
 
@@ -1524,7 +1596,6 @@ function setSyncQuickRange(type) {
     rFrom.value = `${AppState.selectedMonth}-01`;
   } else if (type === 'full_month') {
     rFrom.value = `${AppState.selectedMonth}-01`;
-    // Last day of selected month
     const parts = AppState.selectedMonth.split('-');
     const lastDay = new Date(parseInt(parts[0]), parseInt(parts[1]), 0).getDate();
     rTo.value = `${AppState.selectedMonth}-${lastDay}`;
@@ -1539,7 +1610,7 @@ async function submitPoloxySync() {
     category_code: AppState.selectedCategory,
     month: AppState.selectedMonth,
     mode: syncDateMode,
-    action: (typeof syncActionType !== 'undefined' ? syncActionType : 'both'),
+    action: (typeof syncActionType !== 'undefined' ? syncActionType : 'actual_output'),
     _nocache: Date.now() // Strict cache-busting token
   };
 
@@ -1573,7 +1644,7 @@ async function submitPoloxySync() {
   if (statusMsg) {
     statusMsg.style.display = 'block';
     statusMsg.style.color = 'var(--text-muted)';
-    statusMsg.innerHTML = '<i class="fas fa-sync-alt fa-spin" style="margin-right:5px; color:var(--primary);"></i> Smart Engine contacting Poloxy ERP live server... Bypassing local cache.';
+    statusMsg.innerHTML = '<i class="fas fa-sync-alt fa-spin" style="margin-right:5px; color:var(--primary);"></i> Connecting to Poloxy ERP live server... please wait.';
   }
 
   try {
@@ -1591,17 +1662,20 @@ async function submitPoloxySync() {
     if (data.success) {
       if (statusMsg) {
         statusMsg.style.color = 'var(--success)';
+        const prodInfo = data.total_produced_cartons > 0 ? ` • Output: <strong>${data.total_produced_cartons} ctn</strong>` : '';
+        const openInfo = data.total_opening_cartons > 0 ? ` • Opening Stock: <strong>${data.total_opening_cartons} ctn</strong>` : '';
         statusMsg.innerHTML = `
-          <div style="background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:6px; padding:0.5rem 0.75rem; margin-top:0.35rem;">
-            <strong><i class="fas fa-check-circle"></i> Live ERP Pull Complete!</strong><br>
+          <div style="background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:6px; padding:0.5rem 0.75rem; margin-top:0.35rem; font-size:0.8rem;">
+            <strong><i class="fas fa-check-circle"></i> Poloxy ERP live sync completed successfully!</strong><br>
             <span>Date: <strong>${data.date_range}</strong></span> • 
             <span>Plans Updated: <strong>${data.plans_updated}</strong></span> • 
-            <span>Output: <strong>${(data.total_produced_cartons || 0).toLocaleString()} Ctns</strong></span><br>
-            <small style="color:var(--text-dim); font-size:0.72rem;">Live Timestamp: ${data.live_timestamp} (Zero cache used)</small>
+            <span>New Entries: <strong>${data.plans_created || 0}</strong></span>
+            ${prodInfo}${openInfo}<br>
+            <small style="color:var(--text-dim); font-size:0.72rem;">Live Timestamp: ${data.live_timestamp}</small>
           </div>
         `;
       }
-      showToast(`⚡ Pulled live ERP data for ${data.date_range} (${data.plans_updated} plans updated)`, 'success');
+      showToast(`⚡ Poloxy ERP sync completed: ${data.total_produced_cartons || 0} ctn output (${data.plans_updated + (data.plans_created || 0)} plans)`, 'success');
       loadProductionView();
       loadDashboard();
       setTimeout(() => {
@@ -1610,20 +1684,20 @@ async function submitPoloxySync() {
     } else {
       if (statusMsg) {
         statusMsg.style.color = 'var(--danger)';
-        statusMsg.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${data.error || 'Failed to pull data from ERP'}`;
+        statusMsg.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${data.error || 'Failed to pull data from Poloxy ERP'}`;
       }
       showToast('ERP Sync failed', 'danger');
     }
   } catch (e) {
     if (statusMsg) {
       statusMsg.style.color = 'var(--danger)';
-      statusMsg.innerHTML = '<i class="fas fa-exclamation-circle"></i> Connection error while reaching ERP server.';
+      statusMsg.innerHTML = '<i class="fas fa-exclamation-circle"></i> Network connection error with Poloxy ERP server.';
     }
     showToast('Network error during ERP sync', 'danger');
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> Pull Live ERP Data';
+      btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> <span>Pull ERP Data Now</span>';
     }
   }
 }
@@ -1633,25 +1707,187 @@ function syncFromPoloxyERP() {
   openPoloxySyncModal();
 }
 
-// ----------------- 4. STORE & STOCK (TWO SEPARATE TABS) -----------------
+// ----------------- 4. STORE & STOCK (SEPARATE TABS & SLIDER DRAWER) -----------------
+function slideStoreTabs(direction) {
+  const slider = document.getElementById('store-subtab-slider');
+  if (!slider) return;
+  const scrollAmt = 180;
+  if (direction === 'left') {
+    slider.scrollBy({ left: -scrollAmt, behavior: 'smooth' });
+  } else {
+    slider.scrollBy({ left: scrollAmt, behavior: 'smooth' });
+  }
+}
+
+// Right-Side Slide Drawer for Store
+function openStoreDrawer() {
+  const drawer = document.getElementById('store-navigation-drawer');
+  const backdrop = document.getElementById('store-drawer-backdrop');
+  if (drawer) drawer.classList.add('open');
+  if (backdrop) backdrop.classList.add('open');
+  updateStoreDrawerBadges();
+}
+
+function closeStoreDrawer() {
+  const drawer = document.getElementById('store-navigation-drawer');
+  const backdrop = document.getElementById('store-drawer-backdrop');
+  if (drawer) drawer.classList.remove('open');
+  if (backdrop) backdrop.classList.remove('open');
+}
+
+function selectDrawerStoreTab(tabName) {
+  switchStoreSubTab(tabName);
+  closeStoreDrawer();
+}
+
+function updateStoreDrawerBadges() {
+  const activeTab = AppState.storeSubTab || 'inventory';
+  document.querySelectorAll('.store-drawer-item').forEach(card => {
+    const isCurrent = card.id === `drawer-card-${activeTab}`;
+    card.classList.toggle('active', isCurrent);
+  });
+  const reqBadge = document.getElementById('drawer-store-req-badge');
+  const pMR = AppState.dashboardStats?.requisitions?.pending_production || 0;
+  if (reqBadge) reqBadge.textContent = `${pMR} Pending`;
+}
+
+// Expand / Collapse Store Header Bar
+function toggleStoreHeaderCollapse() {
+  const bar = document.getElementById('store-header-bar-main');
+  const pill = document.getElementById('store-header-collapsed-pill');
+  if (!bar) return;
+  const isHidden = bar.style.display === 'none';
+  if (isHidden) {
+    bar.style.display = 'flex';
+    if (pill) pill.style.display = 'none';
+  } else {
+    bar.style.display = 'none';
+    if (pill) {
+      pill.style.display = 'flex';
+      const badge = document.getElementById('store-current-tab-badge');
+      if (badge) badge.textContent = AppState.storeSubTab ? AppState.storeSubTab.toUpperCase() : 'INVENTORY';
+    }
+  }
+}
+
 function switchStoreSubTab(tabName) {
   AppState.storeSubTab = tabName;
   document.querySelectorAll('.store-tab-link').forEach(l => {
-    l.classList.toggle('active', l.getAttribute('data-subtab') === tabName);
+    const isActive = l.getAttribute('data-subtab') === tabName;
+    l.classList.toggle('active', isActive);
+    if (isActive && typeof l.scrollIntoView === 'function') {
+      try {
+        l.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      } catch (err) {}
+    }
   });
+
+  const badge = document.getElementById('store-current-tab-badge');
+  if (badge) badge.textContent = tabName.toUpperCase();
+
+  updateStoreDrawerBadges();
+
   document.getElementById('store-tab-inventory').style.display = (tabName === 'inventory') ? 'block' : 'none';
   document.getElementById('store-tab-requisitions').style.display = (tabName === 'requisitions') ? 'block' : 'none';
   document.getElementById('store-tab-mrr').style.display = (tabName === 'mrr') ? 'block' : 'none';
   document.getElementById('store-tab-wastage').style.display = (tabName === 'wastage') ? 'block' : 'none';
+  const ledgerTab = document.getElementById('store-tab-ledger');
+  if (ledgerTab) ledgerTab.style.display = (tabName === 'ledger') ? 'block' : 'none';
 
   if (tabName === 'inventory') loadStoreStock();
   else if (tabName === 'requisitions') loadIncomingRequisitions();
   else if (tabName === 'mrr') loadMRREntries();
   else if (tabName === 'wastage') loadWastageEntries();
+  else if (tabName === 'ledger') loadStockLedger();
 }
 
 async function loadStoreView() {
   switchStoreSubTab(AppState.storeSubTab);
+}
+
+// Live Poloxy ERP RM & PM Stock Synchronization
+async function syncMaterialsFromPoloxy() {
+  const cat = AppState.selectedCategory;
+  const btn = document.getElementById('btn-sync-poloxy-rm-pm');
+  let originalHtml = '';
+  if (btn) {
+    originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Poloxy লাইভ স্টক সিঙ্ক হচ্ছে... (~১৫ সেকেন্ড)</span>';
+  }
+
+  showToast(`Poloxy ERP থেকে Unit ${cat}-এর Factory Godown (RAW & PACKAGING MATERIAL) লাইভ স্টক সিঙ্ক শুরু হয়েছে... দয়া করে অপেক্ষা করুন।`, 'info');
+  
+  try {
+    const res = await fetch('/api/materials/sync-poloxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category_code: cat, category: cat })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`✅ Poloxy ERP থেকে ${data.updated_count} টি RM ও PM আইটেমের স্টক সফলভাবে সিঙ্ক হয়েছে!`, 'success');
+      loadStoreStock();
+      loadMaterials();
+      if (AppState.storeSubTab === 'ledger') loadStockLedger();
+    } else {
+      showToast(`Poloxy Sync Error: ${data.error || 'Failed to sync'}`, 'danger');
+    }
+  } catch (e) {
+    showToast('Poloxy ERP সার্ভারের সাথে সংযোগে ত্রুটি দেখা দিয়েছে (Timeout/Network)', 'danger');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+  }
+}
+
+// Material Stock Ledger (Opening, Inward, Outward, Closing)
+async function loadStockLedger() {
+  const cat = AppState.selectedCategory;
+  const matSelect = document.getElementById('ledger-material-filter');
+  const matId = matSelect ? matSelect.value : '';
+  
+  // Populate filter dropdown if empty
+  if (matSelect && matSelect.options.length <= 1 && AppState.materials && AppState.materials.length > 0) {
+    const currentVal = matSelect.value;
+    matSelect.innerHTML = '<option value="">All Materials</option>' + 
+      AppState.materials.map(m => `<option value="${m.id}">[${m.type}] ${m.name} (${m.item_code})</option>`).join('');
+    matSelect.value = currentVal;
+  }
+
+  let url = `/api/reports/stock-ledger?category=${cat}`;
+  if (matId) url += `&material_id=${matId}`;
+
+  try {
+    const res = await fetch(url);
+    const rows = await res.json();
+    const tbody = document.getElementById('store-ledger-tbody');
+    if (!tbody) return;
+
+    if (!rows || rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:2rem; color:var(--text-dim);">No stock ledger transactions found. Run Poloxy Sync, issue materials, or record MRR to generate ledger history!</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td><span style="font-size:0.8rem; color:var(--text-dim);">${r.date || r.created_at || '-'}</span></td>
+        <td><strong>${r.material_name}</strong> <span style="font-size:0.7rem; color:var(--text-dim);">(${r.item_code})</span></td>
+        <td><span class="pill ${r.type === 'RM' ? 'pill-safe' : 'pill-fast'}">${r.type}</span></td>
+        <td>${(r.opening_qty || 0).toLocaleString()} ${r.unit}</td>
+        <td><span style="font-weight:700; color:var(--success);">${r.in_qty > 0 ? '+' + r.in_qty.toLocaleString() : '-'}</span></td>
+        <td><span style="font-weight:700; color:var(--danger);">${r.out_qty > 0 ? '-' + r.out_qty.toLocaleString() : '-'}</span></td>
+        <td><strong style="color:var(--text-main);">${(r.closing_qty || 0).toLocaleString()}</strong> ${r.unit}</td>
+        <td><span class="pill pill-safe" style="font-size:0.72rem;">${r.txn_type}</span></td>
+        <td><span style="font-size:0.75rem;">${r.ref_no || '-'}</span></td>
+        <td><span style="font-size:0.75rem; color:var(--text-dim);">${r.created_by || 'System'}</span></td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    console.error('Error loading stock ledger:', e);
+  }
 }
 
 async function loadStoreStock() {
@@ -2227,14 +2463,21 @@ async function submitEditUser() {
 
 async function deleteUser(id) {
   if (!confirm('Are you sure you want to delete this user?')) return;
+  showDeleteAnimation('ইউজার প্রোফাইল মোছা হচ্ছে...', 'ইউজার ডাটাবেস থেকে নিরাপদভাবে মুছে ফেলা হচ্ছে...');
   try {
     const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
     const data = await res.json();
     if (data.success) {
-      showToast('User deleted', 'success');
-      loadAdminUsers();
+      finishDeleteAnimation('ইউজার সফলভাবে মুছে ফেলা হয়েছে।', () => {
+        showToast('User deleted successfully', 'success');
+        loadAdminUsers();
+      });
+    } else {
+      hideDeleteAnimation();
+      showToast(data.error || 'Failed to delete user', 'danger');
     }
   } catch (e) {
+    hideDeleteAnimation();
     showToast('Failed to delete user', 'danger');
   }
 }
@@ -2245,8 +2488,8 @@ async function loadERPSettings() {
     const res = await fetch('/api/erp/settings');
     const s = await res.json();
     if (document.getElementById('erp-cfg-url')) document.getElementById('erp-cfg-url').value = s.poloxy_url || 'http://erp.paragon.com.bd';
-    if (document.getElementById('erp-cfg-user')) document.getElementById('erp-cfg-user').value = s.poloxy_user || 'a0162e0019';
-    if (document.getElementById('erp-cfg-pass')) document.getElementById('erp-cfg-pass').value = s.poloxy_pass || 'pal.123456';
+    if (document.getElementById('erp-cfg-user')) document.getElementById('erp-cfg-user').value = s.poloxy_user || '';
+    if (document.getElementById('erp-cfg-pass')) document.getElementById('erp-cfg-pass').value = s.poloxy_pass || '';
     if (document.getElementById('erp-cfg-dry-wc')) document.getElementById('erp-cfg-dry-wc').value = s.dry_food_work_center || 'Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa)';
     if (document.getElementById('erp-cfg-frozen-wc')) document.getElementById('erp-cfg-frozen-wc').value = s.frozen_food_work_center || 'Frozen Finished Goods';
   } catch (e) {
@@ -3054,25 +3297,11 @@ async function submitBulkForecast() {
   const formData = new FormData();
   formData.append('file', fileInput.files[0]);
   formData.append('month', month);
-
-  showToast('Uploading and updating sales forecast...', 'primary');
-  try {
-    const res = await fetch('/api/forecast/bulk-upload', {
-      method: 'POST',
-      body: formData
-    });
-    const data = await res.json();
-    if (data.success) {
-      hideModal('modal-bulk-forecast');
-      showToast(data.message || `Uploaded forecast for ${data.count} items!`, 'success');
-      loadForecastView();
-      loadDashboard();
-    } else {
-      showToast(data.error || 'Failed to upload forecast', 'danger');
-    }
-  } catch (e) {
-    showToast('Error uploading forecast file', 'danger');
-  }
+  runUploadWithPreview({
+    url: '/api/forecast/bulk-upload', formData, sourceModal: 'modal-bulk-forecast',
+    cols: [['code', 'SKU Code'], ['name', 'SKU'], ['old', 'আগের (ctn)'], ['new', 'নতুন (ctn)']],
+    onSuccess: () => { loadForecastView(); loadDashboard(); }
+  });
 }
 
 // Bulk Upload & Template for Production Plans
@@ -3092,7 +3321,6 @@ function openBulkProductionModal() {
 async function submitBulkProduction() {
   const fileInput = document.getElementById('bulk-prod-file');
   const month = document.getElementById('bulk-prod-month')?.value || AppState.selectedMonth;
-  const cat = AppState.selectedCategory;
   if (!fileInput.files || fileInput.files.length === 0) {
     showToast('Please select an Excel (.xlsx) file to upload', 'warning');
     return;
@@ -3100,36 +3328,26 @@ async function submitBulkProduction() {
   const formData = new FormData();
   formData.append('file', fileInput.files[0]);
   formData.append('month', month);
-  formData.append('category', cat);
-
-  showToast('Uploading and importing production plans...', 'primary');
-  try {
-    const res = await fetch('/api/production/bulk-upload', {
-      method: 'POST',
-      body: formData
-    });
-    const data = await res.json();
-    if (data.success) {
-      hideModal('modal-bulk-production');
-      showToast(data.message || `Imported ${data.count} production plans!`, 'success');
-      loadProductionView();
-      loadDashboard();
-    } else {
-      showToast(data.error || 'Failed to import production plans', 'danger');
-    }
-  } catch (e) {
-    showToast('Error uploading production plan file', 'danger');
-  }
+  formData.append('category', AppState.selectedCategory);
+  runUploadWithPreview({
+    url: '/api/production/bulk-upload', formData, sourceModal: 'modal-bulk-production',
+    cols: [['code', 'SKU Code'], ['name', 'SKU'], ['date', 'Plan Date'], ['new', 'Carton']],
+    onSuccess: () => { loadProductionView(); loadDashboard(); }
+  });
 }
 
 // Super Admin Data Clear Tool
-function openClearDataModal() {
+function openClearDataModal(defaultSection) {
   if (!isSuperAdminUser()) {
     showToast('Access Denied (নিরাপত্তা সীমাবদ্ধতা): Only Super Admin has permission to access the System Reset & Data Cleanup Tool.', 'danger');
     return;
   }
-  const c = document.getElementById('clear-data-confirm-input');
-  if (c) c.value = '';
+  if (defaultSection) {
+    const secSelect = document.getElementById('clear-data-section');
+    if (secSelect) secSelect.value = defaultSection;
+  }
+  const backupToggle = document.getElementById('clear-data-backup-toggle');
+  if (backupToggle) backupToggle.checked = false; // Default optional unchecked
   showModal('modal-clear-data');
 }
 
@@ -3143,17 +3361,54 @@ async function submitClearData() {
   const rangeType = document.getElementById('clear-data-range-type').value;
   const fromDate = document.getElementById('clear-data-from-date').value;
   const toDate = document.getElementById('clear-data-to-date').value;
-  const confirmText = document.getElementById('clear-data-confirm-input').value.trim();
-
-  if (confirmText !== 'DELETE') {
-    showToast('Please type DELETE in capital letters to confirm', 'warning');
-    return;
-  }
 
   if (rangeType === 'custom' && (!fromDate || !toDate)) {
     showToast('Please select both From Date and To Date', 'warning');
     return;
   }
+
+  // Section names for clear user prompt
+  const sectionNames = {
+    all: 'ALL Operational Data (Full Wipe)',
+    forecast: 'Sales Forecast',
+    production: 'Production Plans & Targets',
+    actual_output: 'Actual Output (Reset to 0)',
+    production_target_only: 'Plan Targets (Reset to 0)',
+    requisitions: 'Material Requisitions',
+    store_stock: 'Store Stock (Reset Current, Floor, Safety Stock & In-Transit to 0)',
+    mrr: 'MRR Inward Entries',
+    wastage: 'Wastage & Scrap Logs',
+    store_txns: 'Store Stock Ledger / Audit Logs',
+    store_all: 'ALL Store Operational Data',
+    procurement: 'Purchase Requisitions (PO)'
+  };
+  const secLabel = sectionNames[section] || section;
+  const confirmMsg = `Are you sure you want to delete/reset ${secLabel}?`;
+  if (!confirm(confirmMsg)) {
+    return;
+  }
+
+  // Optional Backup Download
+  const wantBackup = document.getElementById('clear-data-backup-toggle')?.checked;
+  if (wantBackup) {
+    showToast('Preparing backup file...', 'info');
+    const backedUp = await downloadBackupFile();
+    if (!backedUp) {
+      const proceed = confirm('Warning: Backup download was not completed. Do you want to proceed without backup?');
+      if (!proceed) {
+        showToast('Operation cancelled', 'info');
+        return;
+      }
+    } else {
+      showToast('Backup downloaded successfully', 'success');
+    }
+  }
+
+  // Hide the configuration modal
+  hideModal('modal-clear-data');
+
+  // Trigger Deletion Flash Animation (Visual movie effect)
+  showDeleteAnimation(`Cleaning ${secLabel}...`, 'Removing selected records from database, please wait...');
 
   try {
     const res = await fetch('/api/admin/clear-data', {
@@ -3169,15 +3424,66 @@ async function submitClearData() {
     });
     const data = await res.json();
     if (data.success) {
-      hideModal('modal-clear-data');
-      showToast('Data cleanup executed successfully!', 'success');
-      switchView(AppState.currentView);
+      finishDeleteAnimation(`${secLabel} data cleared successfully.`, () => {
+        showToast('Data cleanup executed successfully!', 'success');
+        switchView(AppState.currentView);
+        if (typeof loadDashboard === 'function') loadDashboard();
+        if (typeof loadStoreStock === 'function') loadStoreStock();
+      });
     } else {
+      hideDeleteAnimation();
       showToast(data.error || 'Failed to clear data', 'danger');
     }
   } catch (e) {
+    hideDeleteAnimation();
     showToast('Error during data cleanup', 'danger');
   }
+}
+
+// ----------------- DELETION FLASH ANIMATION HELPERS -----------------
+function showDeleteAnimation(title, subtitle) {
+  const overlay = document.getElementById('delete-animation-overlay');
+  const icon = document.getElementById('del-anim-icon');
+  const glyph = document.getElementById('del-anim-glyph');
+  const titleEl = document.getElementById('del-anim-title');
+  const subEl = document.getElementById('del-anim-subtitle');
+  const bar = document.getElementById('del-anim-bar');
+  const statusEl = document.getElementById('del-anim-status');
+
+  if (icon) icon.classList.remove('success');
+  if (glyph) glyph.className = 'fas fa-trash-alt';
+  if (bar) bar.classList.remove('success');
+  if (titleEl) titleEl.textContent = title || 'Deleting Data...';
+  if (subEl) subEl.textContent = subtitle || 'Removing selected records from database, please wait...';
+  if (statusEl) statusEl.textContent = 'Processing database cleanup...';
+  if (overlay) overlay.classList.add('active');
+}
+
+function finishDeleteAnimation(successMsg, onComplete) {
+  const icon = document.getElementById('del-anim-icon');
+  const glyph = document.getElementById('del-anim-glyph');
+  const titleEl = document.getElementById('del-anim-title');
+  const subEl = document.getElementById('del-anim-subtitle');
+  const bar = document.getElementById('del-anim-bar');
+  const statusEl = document.getElementById('del-anim-status');
+  const overlay = document.getElementById('delete-animation-overlay');
+
+  if (icon) icon.classList.add('success');
+  if (glyph) glyph.className = 'fas fa-check';
+  if (bar) bar.classList.add('success');
+  if (titleEl) titleEl.textContent = 'Cleanup Completed! ✅';
+  if (subEl) subEl.textContent = successMsg || 'Records deleted successfully from database.';
+  if (statusEl) statusEl.textContent = 'Operation completed ✅';
+
+  setTimeout(() => {
+    if (overlay) overlay.classList.remove('active');
+    if (typeof onComplete === 'function') onComplete();
+  }, 1000);
+}
+
+function hideDeleteAnimation() {
+  const overlay = document.getElementById('delete-animation-overlay');
+  if (overlay) overlay.classList.remove('active');
 }
 
 function printPDFReport() {
@@ -3242,22 +3548,32 @@ async function viewRequisitionDetail(reqId) {
 
     const tbody = document.getElementById('modal-req-items-body');
     tbody.innerHTML = items.map(it => {
+      const gross = it.gross_required_qty !== undefined && it.gross_required_qty !== null ? it.gross_required_qty : it.required_qty;
+      const stock = it.available_stock !== undefined && it.available_stock !== null ? it.available_stock : it.current_stock;
+      const netPR = it.required_qty;
       const pending = it.required_qty - it.issued_qty;
-      const canFulfill = it.current_stock >= pending;
+      const canFulfill = it.current_stock >= (pending > 0 ? pending : 0);
 
       return `
         <tr>
-          <td><strong>${it.material_name}</strong></td>
+          <td>
+            <strong>${it.material_name}</strong>
+            <div style="font-size:0.7rem; color:var(--text-dim);">${it.item_code}</div>
+          </td>
           <td><span class="pill ${it.material_type === 'RM' ? 'pill-safe' : 'pill-fast'}">${it.material_type}</span></td>
-          <td><strong>${it.required_qty}</strong> ${it.unit}</td>
+          <td><span style="font-weight:600;">${gross.toLocaleString()}</span> ${it.unit}</td>
+          <td><span style="color:var(--cyan); font-weight:600;">${stock.toLocaleString()}</span> ${it.unit}</td>
+          <td>
+            <strong style="color:${netPR > 0 ? 'var(--warning)' : 'var(--success)'}; font-size:0.95rem;">
+              ${netPR.toLocaleString()}
+            </strong> ${it.unit}
+            ${netPR === 0 ? '<div style="font-size:0.68rem; color:var(--success); font-weight:600;">Stock Covered</div>' : ''}
+          </td>
           <td>${it.issued_qty} ${it.unit}</td>
           <td>
-            <span style="font-weight:700; color:${canFulfill ? 'var(--text-main)' : 'var(--danger)'};">
-              ${it.current_stock.toLocaleString()}
-            </span> ${it.unit}
-          </td>
-          <td>
-            ${it.status === 'Issued' ? '<span class="pill pill-safe">Issued</span>' : (canFulfill ? '<span class="pill pill-safe">In Stock</span>' : '<span class="pill pill-critical">Deficit</span>')}
+            ${it.status === 'Issued' 
+              ? '<span class="pill pill-safe">Issued</span>' 
+              : (canFulfill ? '<span class="pill pill-safe">In Stock</span>' : '<span class="pill pill-critical">Deficit (PR Needed)</span>')}
           </td>
           <td>
             ${pending > 0 && canFulfill ? `
@@ -3746,55 +4062,49 @@ async function submitBulkMRR() {
     showToast('Please choose an Excel file to upload.', 'warning');
     return;
   }
-  const file = fInp.files[0];
-  const btn = document.getElementById('btn-submit-bulk-mrr');
-  const statusEl = document.getElementById('bulk-mrr-status');
-
-  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing Inward...'; }
-  if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Processing Excel file and updating store stock...'; statusEl.style.color = 'var(--text-muted)'; }
-
   const formData = new FormData();
-  formData.append('file', file);
-
-  try {
-    const res = await fetch('/api/store/mrr/bulk-upload', {
-      method: 'POST',
-      body: formData
-    });
-    const data = await res.json();
-
-    if (data.success) {
-      if (statusEl) {
-        statusEl.style.color = 'var(--success)';
-        statusEl.innerHTML = `<i class="fas fa-check-circle"></i> ${data.message}`;
-      }
-      showToast(`⚡ Processed ${data.processed_count} MRRs successfully!`, 'success');
-      loadMRREntries();
-      loadStoreStock();
-      loadDashboard();
-      setTimeout(() => { hideModal('modal-bulk-mrr'); }, 1500);
-    } else {
-      if (statusEl) {
-        statusEl.style.color = 'var(--danger)';
-        statusEl.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${data.error || 'Failed to process MRR file.'}`;
-      }
-      showToast('Bulk upload failed', 'danger');
-    }
-  } catch (e) {
-    if (statusEl) {
-      statusEl.style.color = 'var(--danger)';
-      statusEl.innerHTML = '<i class="fas fa-exclamation-circle"></i> Connection error while uploading.';
-    }
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Upload & Process Inward'; }
-  }
+  formData.append('file', fInp.files[0]);
+  runUploadWithPreview({
+    url: '/api/store/mrr/bulk-upload', formData, sourceModal: 'modal-bulk-mrr',
+    cols: [['code', 'Item Code'], ['name', 'Material'], ['new', 'Qty'], ['date', 'Date']],
+    onSuccess: () => { loadMRREntries(); loadStoreStock(); loadDashboard(); }
+  });
 }
 
 // ----------------- ENHANCED POLOXY ERP SYNC HANDLERS -----------------
-let syncActionType = 'both';
+let syncActionType = 'actual_output';
 
 function setSyncAction(action) {
   syncActionType = action;
+  
+  const cardBoth = document.getElementById('card-sync-both');
+  const cardOutput = document.getElementById('card-sync-output');
+  const cardOpening = document.getElementById('card-sync-opening');
+
+  const radBoth = document.getElementById('radio-sync-both');
+  const radOutput = document.getElementById('radio-sync-output');
+  const radOpening = document.getElementById('radio-sync-opening');
+
+  [cardBoth, cardOutput, cardOpening].forEach(card => {
+    if (card) {
+      card.classList.remove('active');
+      card.style.borderColor = 'var(--border-color)';
+      card.style.background = 'var(--card-bg)';
+    }
+  });
+
+  const activeCard = document.getElementById(`card-sync-${action === 'actual_output' ? 'output' : (action === 'opening_stock' ? 'opening' : 'both')}`);
+  if (activeCard) {
+    activeCard.classList.add('active');
+    activeCard.style.borderColor = 'var(--primary)';
+    activeCard.style.background = 'rgba(59,130,246,0.06)';
+  }
+
+  if (radBoth) radBoth.checked = (action === 'both');
+  if (radOutput) radOutput.checked = (action === 'actual_output');
+  if (radOpening) radOpening.checked = (action === 'opening_stock');
+
+  // Legacy button styling fallback
   document.querySelectorAll('.sync-action-btn').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById(`btn-sync-action-${action === 'actual_output' ? 'output' : (action === 'opening_stock' ? 'opening' : 'both')}`);
   if (btn) btn.classList.add('active');
@@ -3917,72 +4227,632 @@ async function openForecastBOMModal(skuId, skuName) {
     return;
   }
 
-  const titleEl = document.getElementById('forecast-bom-modal-title');
-  const bodyEl = document.getElementById('forecast-bom-modal-body');
-  if (titleEl) titleEl.textContent = `BOM Specification: ${skuName}`;
-  if (bodyEl) bodyEl.innerHTML = '<div style="text-align:center; padding:2rem;"><i class="fas fa-spinner fa-spin"></i> Loading Bill of Materials from secure database...</div>';
+  const titleEl = document.getElementById('quick-bom-title') || document.getElementById('forecast-bom-modal-title');
+  const subtitleEl = document.getElementById('quick-bom-subtitle');
+  const bodyEl = document.getElementById('quick-bom-body') || document.getElementById('forecast-bom-modal-body');
+  const adminLinkEl = document.getElementById('quick-bom-admin-link');
+
+  if (titleEl) titleEl.textContent = `BOM Formulation: ${skuName}`;
+  if (subtitleEl) subtitleEl.textContent = `Standard Raw & Packaging Material Formulation (Formula per Carton)`;
+  if (bodyEl) {
+    bodyEl.innerHTML = '<div style="text-align:center; padding:2.5rem; color:var(--text-muted);"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary); margin-bottom:0.75rem;"></i><br>Loading Bill of Materials formulation...</div>';
+  }
+  if (adminLinkEl) {
+    adminLinkEl.innerHTML = `
+      <button class="btn btn-sm btn-primary" onclick="hideModal('modal-view-bom'); switchView('master_bom', { adminTab: 'bom' });">
+        <i class="fas fa-edit"></i> Edit BOM in Master Specifications
+      </button>
+    `;
+  }
   showModal('modal-view-bom');
 
   try {
     const res = await fetch(`/api/bom/${skuId}`);
     if (res.status === 403 || res.status === 401) {
-      bodyEl.innerHTML = '<div class="alert alert-danger" style="margin:1rem;"><i class="fas fa-lock"></i> <strong>Access Denied:</strong> Only Super Admin can view Bill of Materials (BOM) specifications.</div>';
+      if (bodyEl) {
+        bodyEl.innerHTML = '<div class="alert alert-danger" style="margin:1rem;"><i class="fas fa-lock"></i> <strong>Access Denied:</strong> Only Super Admin can view Bill of Materials (BOM) specifications.</div>';
+      }
       return;
     }
     const data = await res.json();
     const items = data.items || [];
     if (items.length === 0) {
-      bodyEl.innerHTML = '<div style="text-align:center; padding:2rem; color:var(--text-dim);">No BOM formulation items defined for this SKU.</div>';
+      if (bodyEl) {
+        bodyEl.innerHTML = `
+          <div style="text-align:center; padding:2.5rem; color:var(--text-dim);">
+            <i class="fas fa-exclamation-circle" style="font-size:2.2rem; color:var(--warning); margin-bottom:0.75rem;"></i>
+            <h4 style="margin:0.25rem 0 0.5rem; color:var(--text-main);">No BOM Formulation Found</h4>
+            <p style="font-size:0.85rem; margin-bottom:1rem;">There are no RM/PM formulation components defined for <strong>${skuName}</strong> yet.</p>
+            <button class="btn btn-sm btn-primary" onclick="hideModal('modal-view-bom'); switchView('master_bom', { adminTab: 'bom' });">
+              <i class="fas fa-plus"></i> Define BOM Components
+            </button>
+          </div>
+        `;
+      }
       return;
     }
 
     const rmItems = items.filter(i => i.material_type === 'RM');
     const pmItems = items.filter(i => i.material_type === 'PM');
 
-    const renderTable = (list, typeName) => {
-      if (list.length === 0) return `<div style="font-size:0.8rem; color:var(--text-dim); padding:0.5rem;">No ${typeName} materials defined.</div>`;
+    const calcTotalCost = (list) => list.reduce((sum, it) => sum + ((it.rate_per_ctn || 0) * (it.unit_price || 0)), 0);
+    const rmCost = calcTotalCost(rmItems);
+    const pmCost = calcTotalCost(pmItems);
+    const totalCost = rmCost + pmCost;
+
+    const renderTable = (list, typeName, badgeClass) => {
+      if (list.length === 0) {
+        return `<div style="font-size:0.8rem; color:var(--text-dim); padding:0.5rem 0;">No ${typeName} materials defined in BOM.</div>`;
+      }
       return `
-        <table class="data-table" style="margin-bottom:1rem;">
-          <thead>
-            <tr>
-              <th>Item Code</th>
-              <th>Material Name</th>
-              <th style="text-align:right;">Standard Rate (per Ctn)</th>
-              <th style="text-align:right;">Current Godown Stock</th>
-              <th style="text-align:right;">Unit Price</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${list.map(it => `
-              <tr>
-                <td><strong>${it.item_code}</strong></td>
-                <td>${it.material_name}</td>
-                <td style="text-align:right; font-weight:700; color:var(--primary);">${it.rate_per_ctn} ${it.bom_unit || it.material_unit}</td>
-                <td style="text-align:right;">${(it.current_stock || 0).toLocaleString()} ${it.material_unit}</td>
-                <td style="text-align:right;">৳ ${(it.unit_price || 0).toFixed(2)}</td>
+        <div class="table-responsive" style="max-height:220px; min-height:auto; margin-bottom:1rem; border:1px solid var(--border-color); border-radius:6px;">
+          <table class="data-table" style="width:100%; font-size:0.82rem;">
+            <thead>
+              <tr style="background:var(--bg-tertiary);">
+                <th style="padding:0.45rem 0.6rem;">Item Code</th>
+                <th style="padding:0.45rem 0.6rem;">Material Name</th>
+                <th style="padding:0.45rem 0.6rem; text-align:right;">Standard Rate (per Ctn)</th>
+                <th style="padding:0.45rem 0.6rem; text-align:right;">Current Godown Stock</th>
+                <th style="padding:0.45rem 0.6rem; text-align:right;">Unit Price</th>
+                <th style="padding:0.45rem 0.6rem; text-align:right;">Cost / Ctn</th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${list.map(it => {
+                const itemCost = (it.rate_per_ctn || 0) * (it.unit_price || 0);
+                const rateNum = Number(it.rate_per_ctn || 0);
+                const formattedRate = rateNum.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+                const stockNum = Number(it.current_stock || 0);
+                const formattedStock = stockNum.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+                return `
+                  <tr>
+                    <td style="padding:0.4rem 0.6rem; font-weight:600;">${it.item_code}</td>
+                    <td style="padding:0.4rem 0.6rem;">${it.material_name}</td>
+                    <td style="padding:0.4rem 0.6rem; text-align:right; font-weight:700; color:var(--primary);">
+                      ${formattedRate} ${it.bom_unit || it.material_unit}
+                    </td>
+                    <td style="padding:0.4rem 0.6rem; text-align:right;">
+                      ${formattedStock} ${it.material_unit}
+                    </td>
+                    <td style="padding:0.4rem 0.6rem; text-align:right;">৳ ${(it.unit_price || 0).toFixed(2)}</td>
+                    <td style="padding:0.4rem 0.6rem; text-align:right; font-weight:600;">৳ ${itemCost.toFixed(2)}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
       `;
     };
 
-    bodyEl.innerHTML = `
-      <div style="background:rgba(30,58,138,0.08); border:1px solid rgba(30,58,138,0.25); border-radius:8px; padding:0.75rem 1rem; margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center;">
-        <div>
-          <span class="pill pill-safe"><i class="fas fa-shield-alt"></i> Super Admin Exclusive View</span>
-          <strong style="margin-left:0.5rem; color:var(--text-main); font-size:0.9rem;">${skuName}</strong>
+    if (bodyEl) {
+      bodyEl.innerHTML = `
+        <!-- Top SKU & Cost Overview Banner -->
+        <div style="background:rgba(37,99,235,0.06); border:1px solid rgba(37,99,235,0.2); border-radius:8px; padding:0.75rem 1rem; margin-bottom:1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+          <div>
+            <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); font-weight:700;">Finished Good SKU</div>
+            <div style="font-size:1.05rem; font-weight:800; color:var(--text-main);">${skuName}</div>
+          </div>
+          <div style="display:flex; gap:1rem; text-align:right;">
+            <div>
+              <div style="font-size:0.7rem; color:var(--text-muted);">RM Cost/Ctn</div>
+              <div style="font-size:0.9rem; font-weight:700; color:var(--success);">৳ ${rmCost.toFixed(2)}</div>
+            </div>
+            <div>
+              <div style="font-size:0.7rem; color:var(--text-muted);">PM Cost/Ctn</div>
+              <div style="font-size:0.9rem; font-weight:700; color:var(--warning);">৳ ${pmCost.toFixed(2)}</div>
+            </div>
+            <div style="border-left:1px solid var(--border-color); padding-left:1rem;">
+              <div style="font-size:0.7rem; color:var(--text-muted);">Total Material / Ctn</div>
+              <div style="font-size:0.98rem; font-weight:800; color:var(--primary);">৳ ${totalCost.toFixed(2)}</div>
+            </div>
+          </div>
         </div>
-        <button class="btn btn-sm btn-primary" onclick="hideModal('modal-view-bom'); switchView('master_bom', { adminTab: 'bom' });">
-          <i class="fas fa-edit"></i> Edit in Master BOM
-        </button>
-      </div>
-      <h4 style="margin:0.5rem 0; font-size:0.9rem; color:var(--text-main);"><i class="fas fa-seedling" style="color:var(--success);"></i> Raw Materials (RM):</h4>
-      ${renderTable(rmItems, 'Raw Materials')}
-      <h4 style="margin:1rem 0 0.5rem 0; font-size:0.9rem; color:var(--text-main);"><i class="fas fa-box" style="color:var(--warning);"></i> Packaging Materials (PM):</h4>
-      ${renderTable(pmItems, 'Packaging Materials')}
-    `;
+
+        <!-- Raw Materials Section -->
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+          <h4 style="margin:0; font-size:0.88rem; color:var(--text-main); display:flex; align-items:center; gap:6px;">
+            <i class="fas fa-seedling" style="color:var(--success);"></i>
+            <span>Raw Materials (RM Formulation)</span>
+            <span class="badge" style="background:var(--success); color:#fff; font-size:0.68rem; padding:1px 5px; border-radius:3px;">${rmItems.length} items</span>
+          </h4>
+          <span style="font-size:0.78rem; font-weight:700; color:var(--success);">Subtotal: ৳ ${rmCost.toFixed(2)} / ctn</span>
+        </div>
+        ${renderTable(rmItems, 'Raw Materials')}
+
+        <!-- Packaging Materials Section -->
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem; margin-top:0.75rem;">
+          <h4 style="margin:0; font-size:0.88rem; color:var(--text-main); display:flex; align-items:center; gap:6px;">
+            <i class="fas fa-box" style="color:var(--warning);"></i>
+            <span>Packaging Materials (PM Formulation)</span>
+            <span class="badge" style="background:var(--warning); color:#fff; font-size:0.68rem; padding:1px 5px; border-radius:3px;">${pmItems.length} items</span>
+          </h4>
+          <span style="font-size:0.78rem; font-weight:700; color:var(--warning);">Subtotal: ৳ ${pmCost.toFixed(2)} / ctn</span>
+        </div>
+        ${renderTable(pmItems, 'Packaging Materials')}
+      `;
+    }
   } catch (e) {
-    bodyEl.innerHTML = '<div style="color:var(--danger); padding:1.5rem; text-align:center;">Failed to fetch BOM details.</div>';
+    if (bodyEl) {
+      bodyEl.innerHTML = '<div style="color:var(--danger); padding:2rem; text-align:center;"><i class="fas fa-exclamation-triangle fa-2x" style="margin-bottom:0.5rem;"></i><br>Failed to fetch BOM details from server.</div>';
+    }
+  }
+}
+
+
+// =====================================================================
+// NEW: Current period, My Tasks dashboard, Upload Preview, Poloxy Output Import
+// =====================================================================
+function escHtml(v) {
+  return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function dhakaNow() {
+  const d = new Date(Date.now() + (new Date().getTimezoneOffset() * 60000) + 6 * 3600000);
+  return d;
+}
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+// Replaces hard-coded "2026-07" defaults with the real current month/date
+function initCurrentPeriod() {
+  const d = dhakaNow();
+  const cur = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+  const today = `${cur}-${pad2(d.getDate())}`;
+  AppState.selectedMonth = cur;
+
+  const mNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const months = [];
+  let y = 2026, m = 7;
+  const endTotal = d.getFullYear() * 12 + d.getMonth() + 3;
+  while (y * 12 + (m - 1) <= endTotal) {
+    months.push(`${y}-${pad2(m)}`);
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  document.querySelectorAll('select').forEach(sel => {
+    const vals = Array.from(sel.options).map(o => o.value);
+    if (vals.length && vals.every(v => /^\d{4}-\d{2}$/.test(v))) {
+      sel.innerHTML = months.map(v => {
+        const [yy, mm] = v.split('-');
+        return `<option value="${v}">📅 ${v} (${mNames[parseInt(mm, 10) - 1]} ${yy})</option>`;
+      }).join('');
+      sel.value = cur;
+    }
+  });
+  document.querySelectorAll('input[type="date"]').forEach(inp => {
+    if (/^2026-07-/.test(inp.value)) {
+      inp.value = inp.value.endsWith('-01') ? `${cur}-01` : today;
+    }
+  });
+
+  // Unified date controller + static "July 2026" labels
+  try {
+    const last = `${cur}-${pad2(new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())}`;
+    const nice = `${['January','February','March','April','May','June','July','August','September','October','November','December'][d.getMonth()]} ${d.getFullYear()}`;
+    UnifiedDateState.month = cur;
+    UnifiedDateState.singleDate = today;
+    UnifiedDateState.rangeFrom = `${cur}-01`;
+    UnifiedDateState.rangeTo = today;
+    UnifiedDateState.displayLabel = `📅 ${nice}`;
+    document.querySelectorAll('.unified-date-label').forEach(el => { el.textContent = `📅 ${nice}`; });
+    document.querySelectorAll('.pill.pill-safe').forEach(el => { if (el.textContent.trim() === 'July 2026') el.textContent = nice; });
+  } catch (e) { /* non-critical */ }
+}
+
+
+// ----------------- ACTION CENTER & MY TASKS (ROLE-BASED & COLLAPSIBLE & SLIDE DRAWER) -----------------
+AppState.myTasksData = null;
+AppState.myTasksFilter = 'all';
+
+async function loadMyTasks() {
+  const box = document.getElementById('my-tasks-panel');
+  try {
+    const res = await fetch(`/api/dashboard/my-tasks?category=${encodeURIComponent(AppState.selectedCategory)}&month=${AppState.selectedMonth}`);
+    if (!res.ok) {
+      if (box) box.innerHTML = '';
+      return;
+    }
+    const data = await res.json();
+    AppState.myTasksData = data;
+
+    // Update Top Navbar Badge
+    const navBadge = document.getElementById('nav-action-count');
+    if (navBadge) {
+      const urgentCount = data.urgent || 0;
+      navBadge.textContent = urgentCount;
+      navBadge.style.display = urgentCount > 0 ? 'inline-block' : 'none';
+    }
+
+    // Render on Dashboard (if container exists)
+    if (box) {
+      renderMyTasks(box, data);
+    }
+
+    // Render in Slide-out Drawer
+    renderDrawerTasks(data);
+  } catch (e) {
+    if (box) box.innerHTML = '';
+  }
+}
+
+function renderMyTasks(box, data) {
+  if (!box || !data) return;
+  const levelColor = { danger: 'var(--danger)', warning: 'var(--warning)', info: 'var(--primary)', success: 'var(--success)' };
+  const groupLabel = { 'Sales': 'Sales (সেলস)', 'Production': 'Production (প্রোডাকশন)', 'Store': 'Store (স্টোর)', 'Supply Chain': 'Supply Chain (সাপ্লাই চেইন)' };
+  const groupIcon = { 'Sales': 'fa-chart-line', 'Production': 'fa-industry', 'Store': 'fa-boxes', 'Supply Chain': 'fa-truck-loading' };
+  const multi = data.groups && data.groups.length > 1;
+
+  // Check collapsed state (default collapsed for multi-group / Super Admin to keep executive dashboard clean)
+  const savedState = localStorage.getItem('my_tasks_collapsed');
+  const isCollapsed = savedState !== null ? savedState === 'true' : (multi ? true : false);
+
+  const urgentCount = data.urgent || 0;
+  const curFilter = AppState.myTasksFilter || 'all';
+
+  // Calculate counts per group
+  const counts = {};
+  (data.tasks || []).forEach(t => {
+    counts[t.group] = (counts[t.group] || 0) + 1;
+  });
+
+  // If collapsed: render sleek single-line ribbon
+  if (isCollapsed) {
+    const groupBadges = data.groups.map(g => {
+      const c = counts[g] || 0;
+      return `<span style="font-size:0.75rem; color:var(--text-muted); font-weight:600;"><i class="fas ${groupIcon[g] || 'fa-tag'}" style="color:var(--primary); font-size:0.7rem;"></i> ${g}: <b style="color:var(--text-main);">${c}</b></span>`;
+    }).join(' • ');
+
+    box.innerHTML = `
+      <div class="mt-wrap" style="padding:0.6rem 1.15rem;">
+        <div class="mt-collapsed-strip" onclick="toggleMyTasks()">
+          <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+            <div class="mt-main-heading">
+              <i class="fas fa-bolt" style="color:var(--warning);"></i> 
+              <span>আজকের অ্যাকশন সেন্টার (Action Center)</span>
+            </div>
+            ${urgentCount > 0 ? `<span class="mt-urgent-badge">${urgentCount} টি কাজ অপেক্ষায়</span>` : '<span class="pill pill-safe">কোনো কাজ বাকি নেই ✅</span>'}
+            ${multi ? `<div style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; margin-left:0.5rem;">${groupBadges}</div>` : ''}
+          </div>
+          <button type="button" class="btn btn-sm btn-outline" style="padding:2px 10px; font-size:0.75rem; font-weight:700; border-radius:6px; color:var(--primary); pointer-events:none;">
+            কাজগুলো দেখুন <i class="fas fa-chevron-down" style="margin-left:4px;"></i>
+          </button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // Expanded View
+  const headline = urgentCount > 0 ? `আপনার <b>${urgentCount}</b> টি কাজ অপেক্ষায় আছে` : 'আজ কোনো জরুরি কাজ বাকি নেই ✅';
+
+  // Filter tabs for multi-group users
+  let tabsHtml = '';
+  if (multi) {
+    tabsHtml = `
+      <div class="mt-dept-tabs">
+        <button type="button" class="mt-tab-pill ${curFilter === 'all' ? 'active' : ''}" onclick="setMyTasksFilter('all')">
+          <i class="fas fa-th-large"></i> সব কাজ (${data.tasks.length})
+        </button>
+        ${data.groups.map(g => `
+          <button type="button" class="mt-tab-pill ${curFilter === g ? 'active' : ''}" onclick="setMyTasksFilter('${g}')">
+            <i class="fas ${groupIcon[g] || 'fa-tag'}"></i> ${groupLabel[g] || g} (${counts[g] || 0})
+          </button>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  // Filter tasks
+  const filteredTasks = (curFilter === 'all') 
+    ? (data.tasks || []) 
+    : (data.tasks || []).filter(t => t.group === curFilter);
+
+  const renderTaskCard = t => `
+    <div class="mt-card mt-${t.level}" style="border-left-color:${levelColor[t.level] || 'var(--primary)'};">
+      <div class="mt-icon-box" style="color:${levelColor[t.level] || 'var(--primary)'};">
+        <i class="fas ${escHtml(t.icon)}"></i>
+      </div>
+      <div class="mt-card-body">
+        <div class="mt-card-top">
+          <span class="mt-card-dept">${escHtml(groupLabel[t.group] || t.group)}</span>
+          ${t.count ? `<span class="mt-count" style="background:${levelColor[t.level]};">${escHtml(t.count)}</span>` : ''}
+        </div>
+        <div class="mt-card-title">${escHtml(t.title)}</div>
+        <div class="mt-card-detail">${escHtml(t.detail)}</div>
+      </div>
+      ${t.action ? `
+        <div class="mt-card-action">
+          <button class="btn btn-sm btn-primary" style="font-size:0.75rem; font-weight:700; white-space:nowrap;" onclick='taskAction(${JSON.stringify(t.action.view)}, ${JSON.stringify(t.action.options || {})})'>
+            ${escHtml(t.action.label)} <i class="fas fa-arrow-right" style="font-size:0.7rem; margin-left:3px;"></i>
+          </button>
+        </div>` : ''}
+    </div>
+  `;
+
+  box.innerHTML = `
+    <div class="mt-wrap">
+      <div class="mt-header-row">
+        <div class="mt-title-area" onclick="toggleMyTasks()">
+          <div class="mt-main-heading">
+            <i class="fas fa-bolt" style="color:var(--warning);"></i> 
+            <span>আজকের অ্যাকশন সেন্টার (Action Center)</span>
+          </div>
+          <span class="mt-role-badge">${escHtml(data.role)}</span>
+          ${urgentCount > 0 ? `<span class="mt-urgent-badge">${urgentCount} টি পেন্ডিং</span>` : '<span class="pill pill-safe">ক্লিয়ার</span>'}
+          <span style="font-size:0.78rem; color:var(--text-muted); margin-left:4px;">${headline} · ${escHtml(data.today)}</span>
+        </div>
+        <div class="mt-controls-area">
+          <button class="btn btn-sm btn-outline" onclick="loadMyTasks()" title="রিফ্রেশ"><i class="fas fa-sync-alt"></i></button>
+          <button class="btn btn-sm btn-outline" onclick="toggleMyTasks()" style="font-size:0.75rem; font-weight:700; color:var(--text-dim);" title="হাইড করুন">
+            হাইড করুন <i class="fas fa-chevron-up" style="margin-left:3px;"></i>
+          </button>
+        </div>
+      </div>
+      ${tabsHtml}
+      <div class="mt-cards-grid">
+        ${filteredTasks.length > 0 ? filteredTasks.map(renderTaskCard).join('') : '<div style="color:var(--text-dim); padding:1.5rem; text-align:center; grid-column:1/-1;">এই ক্যাটাগরিতে কোনো পেন্ডিং কাজ নেই।</div>'}
+      </div>
+    </div>
+  `;
+}
+
+function toggleMyTasks() {
+  const current = localStorage.getItem('my_tasks_collapsed') === 'true';
+  localStorage.setItem('my_tasks_collapsed', current ? 'false' : 'true');
+  const box = document.getElementById('my-tasks-panel');
+  if (box && AppState.myTasksData) {
+    renderMyTasks(box, AppState.myTasksData);
+  }
+}
+
+function setMyTasksFilter(filter) {
+  AppState.myTasksFilter = filter;
+  const box = document.getElementById('my-tasks-panel');
+  if (box && AppState.myTasksData) {
+    renderMyTasks(box, AppState.myTasksData);
+  }
+  if (AppState.myTasksData) {
+    renderDrawerTasks(AppState.myTasksData);
+  }
+}
+
+// Global Slide-out Action Drawer
+function toggleActionDrawer() {
+  const drawer = document.getElementById('action-center-drawer');
+  const backdrop = document.getElementById('action-drawer-backdrop');
+  if (!drawer) return;
+  const isOpen = drawer.classList.contains('open');
+  if (isOpen) {
+    closeActionDrawer();
+  } else {
+    drawer.classList.add('open');
+    if (backdrop) backdrop.classList.add('open');
+    if (!AppState.myTasksData) {
+      loadMyTasks();
+    } else {
+      renderDrawerTasks(AppState.myTasksData);
+    }
+  }
+}
+
+function closeActionDrawer() {
+  const drawer = document.getElementById('action-center-drawer');
+  const backdrop = document.getElementById('action-drawer-backdrop');
+  if (drawer) drawer.classList.remove('open');
+  if (backdrop) backdrop.classList.remove('open');
+}
+
+function renderDrawerTasks(data) {
+  if (!data) return;
+  const levelColor = { danger: 'var(--danger)', warning: 'var(--warning)', info: 'var(--primary)', success: 'var(--success)' };
+  const groupLabel = { 'Sales': 'Sales (সেলস)', 'Production': 'Production (প্রোডাকশন)', 'Store': 'Store (স্টোর)', 'Supply Chain': 'Supply Chain (সাপ্লাই চেইন)' };
+  const groupIcon = { 'Sales': 'fa-chart-line', 'Production': 'fa-industry', 'Store': 'fa-boxes', 'Supply Chain': 'fa-truck-loading' };
+  const multi = data.groups && data.groups.length > 1;
+  const curFilter = AppState.myTasksFilter || 'all';
+
+  // Subtitle
+  const subEl = document.getElementById('drawer-user-info');
+  if (subEl) {
+    subEl.textContent = `রোল: ${data.role} • ${data.urgent > 0 ? data.urgent + ' টি কাজ অপেক্ষায়' : 'সব কাজ সম্পন্ন ✅'}`;
+  }
+  const countEl = document.getElementById('drawer-total-count');
+  if (countEl) {
+    countEl.textContent = data.urgent || 0;
+  }
+
+  // Filter tabs in drawer
+  const filterBox = document.getElementById('drawer-filter-tabs');
+  if (filterBox) {
+    if (multi) {
+      filterBox.style.display = 'flex';
+      filterBox.innerHTML = `
+        <button type="button" class="mt-tab-pill ${curFilter === 'all' ? 'active' : ''}" onclick="setMyTasksFilter('all')">
+          সব (${data.tasks.length})
+        </button>
+        ${data.groups.map(g => `
+          <button type="button" class="mt-tab-pill ${curFilter === g ? 'active' : ''}" onclick="setMyTasksFilter('${g}')">
+            ${g}
+          </button>
+        `).join('')}
+      `;
+    } else {
+      filterBox.style.display = 'none';
+    }
+  }
+
+  // Task list in drawer
+  const listBox = document.getElementById('drawer-tasks-list');
+  if (!listBox) return;
+
+  const filteredTasks = (curFilter === 'all') 
+    ? (data.tasks || []) 
+    : (data.tasks || []).filter(t => t.group === curFilter);
+
+  if (filteredTasks.length === 0) {
+    listBox.innerHTML = '<div style="color:var(--text-dim); text-align:center; padding:3rem 1rem;"><i class="fas fa-check-circle fa-2x" style="color:var(--success); margin-bottom:0.5rem;"></i><br>আজ কোনো পেন্ডিং কাজ নেই।</div>';
+    return;
+  }
+
+  listBox.innerHTML = filteredTasks.map(t => `
+    <div class="mt-card mt-${t.level}" style="border-left-color:${levelColor[t.level] || 'var(--primary)'}; flex-direction:column; align-items:stretch; gap:0.5rem;">
+      <div style="display:flex; align-items:flex-start; gap:0.65rem;">
+        <div class="mt-icon-box" style="color:${levelColor[t.level] || 'var(--primary)'}; width:32px; height:32px; font-size:0.95rem;">
+          <i class="fas ${escHtml(t.icon)}"></i>
+        </div>
+        <div style="flex:1; min-width:0;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span class="mt-card-dept">${escHtml(groupLabel[t.group] || t.group)}</span>
+            ${t.count ? `<span class="mt-count" style="background:${levelColor[t.level]};">${escHtml(t.count)}</span>` : ''}
+          </div>
+          <div class="mt-card-title" style="font-size:0.84rem;">${escHtml(t.title)}</div>
+          <div class="mt-card-detail" style="font-size:0.74rem;">${escHtml(t.detail)}</div>
+        </div>
+      </div>
+      ${t.action ? `
+        <button class="btn btn-sm btn-primary" style="width:100%; font-size:0.75rem; font-weight:700; justify-content:center; margin-top:0.35rem;" onclick='closeActionDrawer(); taskAction(${JSON.stringify(t.action.view)}, ${JSON.stringify(t.action.options || {})})'>
+          ${escHtml(t.action.label)} <i class="fas fa-arrow-right" style="margin-left:4px;"></i>
+        </button>` : ''}
+    </div>
+  `).join('');
+}
+
+function taskAction(view, options) {
+  closeActionDrawer();
+  options = options || {};
+  switchView(view, options);
+  if (options.action === 'output-import') {
+    setTimeout(() => openOutputImportModal(), 150);
+  }
+}
+
+// ----------------- UPLOAD PREVIEW (dry-run -> confirm) -----------------
+let _pendingUpload = null;
+
+async function runUploadWithPreview(cfg) {
+  const { url, formData } = cfg;
+  formData.set('preview', '1');
+  showToast('ফাইল যাচাই করা হচ্ছে...', 'primary');
+  let data;
+  try {
+    const res = await fetch(url, { method: 'POST', body: formData });
+    data = await res.json();
+    if (!res.ok || data.error) {
+      showToast(data.error || 'ফাইল যাচাই ব্যর্থ', 'danger');
+      return;
+    }
+  } catch (e) {
+    showToast('সার্ভারের সাথে যোগাযোগ করা যায়নি', 'danger');
+    return;
+  }
+  _pendingUpload = cfg;
+  renderUploadPreview(data, cfg);
+}
+
+function renderUploadPreview(data, cfg) {
+  const s = data.summary;
+  document.getElementById('upload-preview-title').textContent = data.title || 'Upload Preview';
+  document.getElementById('upload-preview-summary').innerHTML = `
+    <span class="up-chip up-ok"><b>${s.ok}</b> ঠিক আছে</span>
+    <span class="up-chip up-warn"><b>${s.warn}</b> সতর্কতা</span>
+    <span class="up-chip up-error"><b>${s.error}</b> ভুল (বাদ যাবে)</span>
+    <span class="up-chip up-skip"><b>${s.skip}</b> বাদ/অপরিবর্তিত</span>`;
+  document.getElementById('upload-preview-note').textContent = data.unit_note || '';
+
+  const cols = cfg.cols || [['code', 'Code'], ['name', 'Name'], ['new', 'Value']];
+  const badge = { ok: 'ঠিক', warn: 'সতর্ক', error: 'ভুল', skip: 'বাদ' };
+  const rows = data.rows.map(r => `
+    <tr class="up-row up-row-${r.status}">
+      <td>${escHtml(r.row)}</td>
+      ${cols.map(([k]) => `<td>${escHtml(r[k] === null || r[k] === undefined ? '' : r[k])}</td>`).join('')}
+      <td><span class="up-badge up-${r.status}">${badge[r.status] || r.status}</span> ${escHtml(r.message)}</td>
+    </tr>`).join('');
+  document.getElementById('upload-preview-table').innerHTML = `
+    <table class="data-table up-table"><thead><tr><th>সারি</th>${cols.map(([, l]) => `<th>${escHtml(l)}</th>`).join('')}<th>অবস্থা</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    ${data.truncated ? '<div class="up-note">প্রথম ৪০০ সারি দেখানো হয়েছে; কনফার্ম করলে সব বৈধ সারি প্রয়োগ হবে।</div>' : ''}`;
+
+  const btn = document.getElementById('upload-preview-confirm');
+  btn.disabled = s.applicable === 0;
+  btn.innerHTML = s.applicable === 0
+    ? '<i class="fas fa-ban"></i> প্রয়োগ করার মতো সারি নেই'
+    : `<i class="fas fa-check"></i> কনফার্ম — ${s.applicable} টি সারি প্রয়োগ করুন`;
+  if (cfg.sourceModal) hideModal(cfg.sourceModal);
+  showModal('modal-upload-preview');
+}
+
+async function confirmUploadPreview() {
+  if (!_pendingUpload) return;
+  const cfg = _pendingUpload;
+  const btn = document.getElementById('upload-preview-confirm');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> প্রয়োগ হচ্ছে...';
+  cfg.formData.set('preview', '0');
+  try {
+    const res = await fetch(cfg.url, { method: 'POST', body: cfg.formData });
+    const data = await res.json();
+    if (data.success) {
+      hideModal('modal-upload-preview');
+      showToast(data.message || 'সফলভাবে সম্পন্ন', 'success');
+      _pendingUpload = null;
+      if (cfg.onSuccess) cfg.onSuccess(data);
+    } else {
+      showToast(data.error || 'প্রয়োগ ব্যর্থ', 'danger');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-redo"></i> আবার চেষ্টা করুন';
+    }
+  } catch (e) {
+    showToast('সার্ভারের সাথে যোগাযোগ করা যায়নি', 'danger');
+    btn.disabled = false;
+  }
+}
+
+function cancelUploadPreview() {
+  hideModal('modal-upload-preview');
+  _pendingUpload = null;
+}
+
+// ----------------- POLOXY ACTUAL OUTPUT IMPORT -----------------
+function openOutputImportModal() {
+  const f = document.getElementById('output-import-file');
+  if (f) f.value = '';
+  const lbl = document.getElementById('output-import-file-label');
+  if (lbl) lbl.textContent = 'Click to browse Poloxy output report (.xlsx / .csv)';
+  const d = document.getElementById('output-import-date');
+  if (d && !d.value) d.value = `${dhakaNow().getFullYear()}-${pad2(dhakaNow().getMonth() + 1)}-${pad2(dhakaNow().getDate())}`;
+  showModal('modal-output-import');
+}
+
+function submitOutputImport() {
+  const f = document.getElementById('output-import-file');
+  if (!f || !f.files || !f.files.length) {
+    showToast('Poloxy থেকে ডাউনলোড করা Output রিপোর্ট সিলেক্ট করুন', 'warning');
+    return;
+  }
+  const formData = new FormData();
+  formData.append('file', f.files[0]);
+  formData.append('category', AppState.selectedCategory);
+  formData.append('qty_unit', document.getElementById('output-import-unit').value);
+  formData.append('default_date', document.getElementById('output-import-date').value);
+  runUploadWithPreview({
+    url: '/api/production/output-import', formData, sourceModal: 'modal-output-import',
+    cols: [['code', 'SKU Code'], ['name', 'SKU'], ['date', 'Date'], ['old', 'আগের (ctn)'], ['new', 'Poloxy (ctn)']],
+    onSuccess: () => { loadProductionView(); loadDashboard(); }
+  });
+}
+
+// ----------------- BACKUP -----------------
+async function downloadBackupFile() {
+  try {
+    const res = await fetch('/api/admin/backup');
+    if (!res.ok) return false;
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `paragon_backup_${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return true;
+  } catch (e) {
+    return false;
   }
 }

@@ -7,7 +7,26 @@ import hashlib
 import base64
 import time
 from datetime import datetime, timedelta
+import secrets
+from werkzeug.security import generate_password_hash, check_password_hash
 from flask import Flask, request, jsonify, send_file, render_template
+
+# Auto-load .env configuration
+def load_dotenv_env():
+    for base in [os.path.dirname(__file__), os.path.dirname(os.path.dirname(__file__))]:
+        env_f = os.path.join(base, ".env")
+        if os.path.exists(env_f):
+            try:
+                with open(env_f, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            if k.strip() not in os.environ:
+                                os.environ[k.strip()] = v.strip().strip("'\"")
+            except Exception:
+                pass
+load_dotenv_env()
 
 app = Flask(
     __name__,
@@ -28,27 +47,11 @@ if os.environ.get("VERCEL"):
         DB_PATH = tmp_db
 
 from turso_client import TursoConnection, test_turso_connection, migrate_local_sqlite_to_turso
-
-TURSO_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "turso_config.json")
-TMP_TURSO_CONFIG = "/tmp/turso_config.json"
+from poloxy_service import PoloxyService, POLOXY_CONFIG
 
 def get_turso_credentials():
     url = os.environ.get("TURSO_DATABASE_URL")
     token = os.environ.get("TURSO_AUTH_TOKEN")
-    if url and token:
-        return url, token
-
-    for cfg_path in (TMP_TURSO_CONFIG, TURSO_CONFIG_PATH):
-        if os.path.exists(cfg_path):
-            try:
-                with open(cfg_path, "r", encoding="utf-8") as f:
-                    cfg = json.load(f)
-                    url = cfg.get("url") or url
-                    token = cfg.get("token") or token
-                    if url and token:
-                        return url, token
-            except Exception:
-                pass
     return url, token
 
 def get_db():
@@ -77,8 +80,30 @@ def style_merged_range(ws, cell_range, font=None, fill=None, border=None, alignm
 def rows_to_dict(rows):
     return [dict(row) for row in rows]
 
-# ----------------- STATELESS HMAC SIGNED SESSIONS (VERCEL SERVERLESS SAFE) -----------------
-SECRET_KEY = os.environ.get("SESSION_SECRET", "paragon_planning_enterprise_secret_key_2026")
+# ----------------- STATELESS HMAC SIGNED SESSIONS (VERCEL & MULTI-USER SAFE) -----------------
+SECRET_KEY = os.environ.get("SESSION_SECRET")
+if not SECRET_KEY:
+    # No hard-coded secret in source. Set SESSION_SECRET in Vercel/.env for stable sessions.
+    SECRET_KEY = secrets.token_hex(32)
+    print("WARNING: SESSION_SECRET not set - using a temporary random key (sessions reset on restart).")
+
+def current_month():
+    return (datetime.utcnow() + timedelta(hours=6)).strftime("%Y-%m")
+
+# ----------------- PASSWORD HASHING (legacy plain-text auto-upgrades on next login) -----------------
+def is_hashed(p):
+    return isinstance(p, str) and p.startswith(("pbkdf2:", "scrypt:"))
+
+def verify_password(stored, given):
+    if not stored:
+        return False
+    if is_hashed(stored):
+        return check_password_hash(stored, given)
+    return hmac.compare_digest(str(stored), str(given))
+
+def hash_password(p):
+    return generate_password_hash(p)
+
 
 def generate_session_token(user_data):
     payload = {
@@ -91,7 +116,7 @@ def generate_session_token(user_data):
             "allowed_category": user_data.get("allowed_category", "ALL"),
             "must_change_password": user_data.get("must_change_password", False)
         },
-        "exp": int(time.time()) + (86400 * 30) # 30 days session
+        "exp": int(time.time()) + (86400 * 7) # 7 days session
     }
     payload_json = json.dumps(payload, separators=(',', ':'))
     b64_data = base64.urlsafe_b64encode(payload_json.encode('utf-8')).decode('utf-8').rstrip('=')
@@ -114,9 +139,6 @@ def verify_session_token(token_str):
     except Exception:
         return None
 
-# In-memory fallback for local single-process dev
-CURRENT_SESSION = {}
-
 def get_current_session():
     # 1. Check Authorization header: Bearer <token>
     auth_header = request.headers.get("Authorization", "")
@@ -135,7 +157,11 @@ def get_current_session():
         if user_info:
             return user_info
 
-    return CURRENT_SESSION
+    return {}
+
+def get_current_user_name(default_name="System Admin"):
+    s = get_current_session()
+    return s.get("name") or s.get("username") or default_name
 
 def check_role_permission(allowed_roles, action_desc="perform this action"):
     session = get_current_session()
@@ -149,6 +175,20 @@ def check_role_permission(allowed_roles, action_desc="perform this action"):
     return False, jsonify({
         "error": f"Access Denied (Read-Only): Your role '{user_role}' does not have permission to {action_desc}. Only {', '.join(allowed_roles)} or Super Admin can edit."
     }), 403
+
+# ----------------- CENTRAL LOGIN GUARD: every /api/* needs a valid session except login/logout -----------------
+PUBLIC_API_PATHS = {"/api/auth/login", "/api/auth/logout", "/api/auth/current-user", "/api/health"}
+
+@app.before_request
+def require_login_for_api():
+    path = request.path
+    if path.startswith("/api/") and path not in PUBLIC_API_PATHS and request.method != "OPTIONS":
+        if not get_current_session().get("id"):
+            return jsonify({"error": "Unauthorized: Please log in."}), 401
+
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    return jsonify({"status": "ok", "app": "Paragon Production & Store Planning Portal"})
 
 # ----------------- AUTH & USER MANAGEMENT -----------------
 @app.route("/api/auth/current-user", methods=["GET"])
@@ -165,9 +205,17 @@ def login_user():
     password = data.get("password", "").strip()
     
     conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1", (username, password)).fetchone()
+    user = conn.execute("SELECT * FROM users WHERE username = ? AND is_active = 1", (username,)).fetchone()
+    if user and not verify_password(user["password"], password):
+        user = None
+    if user and not is_hashed(user["password"]):
+        try:
+            conn.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(password), user["id"]))
+            conn.commit()
+        except Exception as e:
+            print("Password upgrade skipped:", e)
     conn.close()
-    
+
     if user:
         user_keys = user.keys() if hasattr(user, 'keys') else []
         must_change = bool(user["must_change_password"]) if "must_change_password" in user_keys else False
@@ -186,17 +234,14 @@ def login_user():
             "must_change_password": must_change
         }
         token = generate_session_token(user_dict)
-        CURRENT_SESSION.clear()
-        CURRENT_SESSION.update(user_dict)
 
         resp = jsonify({"success": True, "user": user_dict, "token": token})
-        resp.set_cookie("paragon_session_token", token, max_age=86400 * 30, httponly=False, samesite="Lax")
+        resp.set_cookie("paragon_session_token", token, max_age=86400 * 7, httponly=True, samesite="Lax")
         return resp
     return jsonify({"error": "Invalid username or password"}), 401
 
 @app.route("/api/auth/logout", methods=["POST"])
 def logout_user():
-    CURRENT_SESSION.clear()
     resp = jsonify({"success": True})
     resp.delete_cookie("paragon_session_token")
     return resp
@@ -219,45 +264,19 @@ def change_password():
         
     conn = get_db()
     user = conn.execute("SELECT * FROM users WHERE id = ?", (session["id"],)).fetchone()
-    if not user or user["password"] != old_password:
+    if not user or not verify_password(user["password"], old_password):
         conn.close()
         return jsonify({"error": "Incorrect current password"}), 400
         
-    conn.execute("UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?", (new_password, session["id"]))
+    conn.execute("UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?", (hash_password(new_password), session["id"]))
     conn.commit()
     conn.close()
     session["must_change_password"] = False
     new_token = generate_session_token(session)
     resp = jsonify({"success": True, "message": "Password updated successfully!", "token": new_token})
-    resp.set_cookie("paragon_session_token", new_token, max_age=86400 * 30, httponly=False, samesite="Lax")
+    resp.set_cookie("paragon_session_token", new_token, max_age=86400 * 7, httponly=True, samesite="Lax")
     return resp
 
-@app.route("/api/auth/switch-role", methods=["POST"])
-def switch_role():
-    data = request.json or {}
-    role = data.get("role", "Super Admin")
-    conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE role = ? AND is_active = 1 LIMIT 1", (role,)).fetchone()
-    conn.close()
-    if user:
-        user_keys = user.keys() if hasattr(user, 'keys') else []
-        must_change = bool(user["must_change_password"]) if "must_change_password" in user_keys else False
-        user_dict = {
-            "id": user["id"],
-            "username": user["username"],
-            "name": user["name"],
-            "role": user["role"],
-            "department": user["department"],
-            "allowed_category": user["allowed_category"],
-            "must_change_password": must_change
-        }
-        token = generate_session_token(user_dict)
-        CURRENT_SESSION.clear()
-        CURRENT_SESSION.update(user_dict)
-        resp = jsonify({"success": True, "user": user_dict, "token": token})
-        resp.set_cookie("paragon_session_token", token, max_age=86400 * 30, httponly=False, samesite="Lax")
-        return resp
-    return jsonify({"error": "Role not found"}), 404
 
 @app.route("/api/users", methods=["GET"])
 def get_all_users():
@@ -265,7 +284,7 @@ def get_all_users():
     if session.get("role") not in ("Super Admin", "Admin"):
         return jsonify({"error": "Access Denied: Only Super Admin can view or manage users."}), 403
     conn = get_db()
-    users = conn.execute("SELECT id, username, name, role, department, allowed_category, password, is_active, created_at, must_change_password FROM users ORDER BY id ASC").fetchall()
+    users = conn.execute("SELECT id, username, name, role, department, allowed_category, is_active, created_at, must_change_password FROM users ORDER BY id ASC").fetchall()
     conn.close()
     return jsonify(rows_to_dict(users))
 
@@ -290,7 +309,7 @@ def create_user():
         conn.execute("""
             INSERT INTO users (username, name, role, department, password, allowed_category, must_change_password)
             VALUES (?, ?, ?, ?, ?, ?, 1)
-        """, (username, name, role, dept, password, allowed))
+        """, (username, name, role, dept, hash_password(password), allowed))
         conn.commit()
         conn.close()
         return jsonify({"success": True})
@@ -310,7 +329,7 @@ def update_user(user_id):
             conn.execute("""
                 UPDATE users SET name = ?, role = ?, department = ?, password = ?, allowed_category = ?
                 WHERE id = ?
-            """, (data.get("name"), data.get("role"), data.get("department"), data.get("password"), data.get("allowed_category"), user_id))
+            """, (data.get("name"), data.get("role"), data.get("department"), hash_password(data.get("password")), data.get("allowed_category"), user_id))
         else:
             conn.execute("""
                 UPDATE users SET name = ?, role = ?, department = ?, allowed_category = ?
@@ -459,11 +478,13 @@ def get_erp_settings():
     conn = get_db()
     rows = conn.execute("SELECT key, value FROM erp_settings").fetchall()
     conn.close()
-    settings = {r["key"]: r["value"] for r in rows}
+    settings = {r["key"]: r["value"] for r in rows if not any(w in str(r["key"]).lower() for w in ("pass", "token", "secret"))}
     return jsonify(settings)
 
 @app.route("/api/erp/settings", methods=["POST"])
 def save_erp_settings():
+    if get_current_session().get("role") not in ("Super Admin", "Admin"):
+        return jsonify({"error": "Access Denied: Only Super Admin can change ERP settings."}), 403
     data = request.json or {}
     conn = get_db()
     cursor = conn.cursor()
@@ -479,17 +500,17 @@ def save_erp_settings():
 @app.route("/api/erp/sync", methods=["POST"])
 def sync_poloxy_erp():
     """
-    Poloxy ERP Smart Live Extraction Engine (Zero-Cache Real-Time Pull).
-    Implements:
-    - Requirement 8: Actual Produced Output extraction (Branch Unit, Work Center, Type=Output, Product Type=Main Product).
-    - Requirement 9: Opening Stock extraction (Inventory Godown Stock with zero value, Cut-Up-Part, Closing section).
-    - Requirement 4: Net Plan = MAX(0, Forecast - Opening Stock).
+    Poloxy ERP Live Integration Engine:
+    - action='actual_output': Pulls live factory workcenter output from Poloxy dt_production_summary_rpt.
+    - action='opening_stock': Pulls FG godown closing/opening stock.
+    - action='both': Pulls both production output and opening stock.
+    - action='materials': Syncs raw materials and packaging materials into materials table.
     """
     data = request.json or {}
-    cat_code = data.get("category_code", "05")
-    month = data.get("month", "2026-07")
-    mode = data.get("mode", "single") # 'single' or 'range'
-    action = data.get("action", "both") # 'actual_output', 'opening_stock', or 'both'
+    cat_code = str(data.get("category_code", "05"))
+    month = data.get("month", datetime.now().strftime("%Y-%m"))
+    mode = data.get("mode", "single")
+    action = data.get("action", "both")
     single_date = data.get("date", "").strip()
     date_from = data.get("date_from", "").strip()
     date_to = data.get("date_to", "").strip()
@@ -505,195 +526,351 @@ def sync_poloxy_erp():
         if not date_to:
             date_to = datetime.now().strftime("%Y-%m-%d")
 
-    # Exact ERP Parameters per User Requirements (Rule 8 & 9)
-    if cat_code == "05":
-        branch_unit = "05. Dry Foods"
-        work_center = "Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa)"
-        godown_name = "05. Dry Food Factory Godown"
-    elif cat_code == "02":
-        branch_unit = "02. Frozen Foods"
-        work_center = "Frozen Finished Goods"
-        godown_name = "02. Frozen Foods Factory Godown"
-    else:
-        branch_unit = "01. Process Chicken"
-        work_center = "Process Chicken Plant"
-        godown_name = "01. Process Chicken Factory Godown"
-        
-    group_name = "Cut-Up-Part"
+    # Handle Materials sync request
+    if action in ("materials", "rm_pm"):
+        return sync_materials_poloxy()
+
+    cfg = POLOXY_CONFIG.get(cat_code, POLOXY_CONFIG['05'])
+    branch_unit = cfg['name']
+    godown_name = cfg['factory_godown_name']
+    godown_id = cfg['factory_godown_id']
+    work_center = cfg['work_center']
+    group_name = cfg['groups']['FG']['name']
+    group_id = cfg['groups']['FG']['id']
     pull_timestamp = datetime.now().strftime("%d-%b-%Y %I:%M:%S %p")
     date_display = single_date if mode == "single" else f"{date_from} to {date_to}"
 
-    target_date_str = single_date if mode == "single" else date_from
+    poloxy = PoloxyService()
+    poloxy_connected = False
+    prod_items = {}
+    fg_stock_items = {}
+
     try:
-        target_dt = datetime.strptime(target_date_str, "%Y-%m-%d")
-        prev_dt = target_dt - timedelta(days=1)
-        prev_date_str = prev_dt.strftime("%Y-%m-%d")
-        prev_date_display = prev_dt.strftime("%d-%b-%Y")
-        plan_date_display = target_dt.strftime("%d-%b-%Y")
-    except Exception:
-        prev_date_str = target_date_str
-        prev_date_display = "Prior Day"
-        plan_date_display = target_date_str
+        poloxy.login()
+        poloxy_connected = True
+
+        # 1. Fetch live production output if requested
+        if action in ("both", "actual_output"):
+            try:
+                prod_items = poloxy.fetch_production_output(cat_code, date_from, date_to)
+            except Exception as pe:
+                print(f"[!] Warning pulling production output: {pe}")
+
+        # 2. Fetch live opening stock if requested
+        if action in ("both", "opening_stock"):
+            try:
+                # Dry Foods (05) tracks FG via factory line outputs; for other categories query godown with safe handling
+                if cat_code != "05":
+                    fg_stock_items = poloxy.fetch_godown_stock_items(godown_name, godown_id, group_name, group_id, single_date or date_from)
+            except Exception as se:
+                print(f"[!] Warning pulling FG stock: {se}")
+
+    except Exception as e:
+        print(f"[!] Poloxy Live Connection Warning: {e}. Falling back to existing database plans.")
 
     conn = get_db()
     cursor = conn.cursor()
 
-    # Find existing plans for this category and date range
-    plans = conn.execute("""
-        SELECT p.id, p.plan_no, p.plan_date, p.planned_ctn, p.opening_stock_ctn, s.id AS sku_id, s.ctn_size, s.name, s.sku_code
-        FROM production_plans p
-        JOIN skus s ON p.sku_id = s.id
-        WHERE p.category_code = ? AND p.plan_date >= ? AND p.plan_date <= ?
-    """, (cat_code, date_from, date_to)).fetchall()
+    # Load all SKUs for this unit
+    sku_rows = conn.execute("SELECT id, sku_code, name, ctn_size FROM skus WHERE category_code = ?", (cat_code,)).fetchall()
+    by_code = {str(s["sku_code"]).strip().upper(): s for s in sku_rows}
+    by_name = {str(s["name"]).strip().lower(): s for s in sku_rows}
 
+    updated_count = 0
     created_count = 0
-    if len(plans) == 0:
-        # Check active month plans
-        month_plans = conn.execute("""
-            SELECT p.id, p.plan_no, p.plan_date, p.planned_ctn, p.opening_stock_ctn, s.id AS sku_id, s.ctn_size, s.name, s.sku_code
+    total_produced_ctn = 0.0
+    total_opening_ctn = 0.0
+
+    target_date = single_date if mode == "single" else date_to
+    target_month = target_date[:7]
+
+    # Process live production output from Poloxy
+    if action in ("both", "actual_output") and prod_items:
+        for p_key, p_info in prod_items.items():
+            p_name = p_info["item"].strip()
+            p_qty = float(p_info["qty"] or 0.0)
+            if p_qty <= 0:
+                continue
+
+            # Match SKU
+            matched_sku = None
+            if p_key in by_name:
+                matched_sku = by_name[p_key]
+            else:
+                for k, s in by_name.items():
+                    if k in p_key or p_key in k:
+                        matched_sku = s
+                        break
+
+            if not matched_sku:
+                # Auto-register newly discovered SKU from Poloxy factory line
+                sku_count = cursor.execute("SELECT COUNT(*) FROM skus WHERE category_code = ?", (cat_code,)).fetchone()[0] + 1
+                new_code = f"SKU-{cat_code}-{sku_count:03d}"
+                cursor.execute("""
+                    INSERT INTO skus (category_code, sku_code, name, ctn_size, unit, status)
+                    VALUES (?, ?, ?, 12, 'Pkt', 'Active')
+                """, (cat_code, new_code, p_name))
+                new_sku_id = cursor.lastrowid
+                matched_sku = {"id": new_sku_id, "sku_code": new_code, "name": p_name, "ctn_size": 12}
+                by_name[p_key] = matched_sku
+
+            sku_id = matched_sku["id"]
+            ctn_size = float(matched_sku["ctn_size"] or 1.0)
+            produced_ctn = round(p_qty, 2)
+            produced_pcs = round(produced_ctn * ctn_size, 2)
+            total_produced_ctn += produced_ctn
+
+            # Check if plan already exists for this SKU and date
+            existing_plan = cursor.execute("""
+                SELECT id, plan_no, planned_ctn, actual_produced_ctn
+                FROM production_plans
+                WHERE category_code = ? AND sku_id = ? AND plan_date = ? AND status != 'Cancelled'
+                ORDER BY id LIMIT 1
+            """, (cat_code, sku_id, target_date)).fetchone()
+
+            if existing_plan:
+                old_produced = float(existing_plan["actual_produced_ctn"] or 0.0)
+                planned = float(existing_plan["planned_ctn"] or 0.0)
+                new_status = 'Completed' if planned > 0 and produced_ctn >= planned else 'In Production'
+                cursor.execute("""
+                    UPDATE production_plans
+                    SET actual_produced_ctn = ?,
+                        actual_produced_pcs = ?,
+                        status = ?,
+                        poloxy_synced_at = ?,
+                        work_center_name = ?
+                    WHERE id = ?
+                """, (produced_ctn, produced_pcs, new_status, pull_timestamp, p_info.get("workcenter", work_center), existing_plan["id"]))
+                updated_count += 1
+
+                # Deduct BOM floor stock
+                delta = produced_ctn - old_produced
+                if delta > 0:
+                    for b in cursor.execute("SELECT material_id, rate_per_ctn FROM bom WHERE sku_id = ?", (sku_id,)).fetchall():
+                        cursor.execute("""
+                            UPDATE materials SET floor_stock = MAX(0.0, ROUND(COALESCE(floor_stock, 0.0) - ?, 4))
+                            WHERE id = ?
+                        """, (round(delta * b["rate_per_ctn"], 4), b["material_id"]))
+            else:
+                # Create a plan entry for this day so the factory's actual output is recorded
+                plan_no = f"PP-{cat_code}-{target_date.replace('-', '')}-{int(sku_id):03d}"
+                cursor.execute("""
+                    INSERT INTO production_plans (
+                        category_code, plan_no, month_year, plan_date, sku_id,
+                        planned_ctn, planned_pcs, opening_stock_ctn, opening_stock_pcs,
+                        actual_produced_ctn, actual_produced_pcs, suggested_ctn, status,
+                        created_by, notes, poloxy_synced_at, work_center_name
+                    ) VALUES (?, ?, ?, ?, ?, 0.0, 0.0, 0.0, 0.0, ?, ?, 0.0, 'Completed', 'Poloxy Live Sync', ?, ?, ?)
+                """, (
+                    cat_code, plan_no, target_month, target_date, sku_id,
+                    produced_ctn, produced_pcs,
+                    f"Live Poloxy Output: {produced_ctn} ctn at {pull_timestamp}",
+                    pull_timestamp, p_info.get("workcenter", work_center)
+                ))
+                created_count += 1
+
+                # Deduct BOM floor stock
+                for b in cursor.execute("SELECT material_id, rate_per_ctn FROM bom WHERE sku_id = ?", (sku_id,)).fetchall():
+                    cursor.execute("""
+                        UPDATE materials SET floor_stock = MAX(0.0, ROUND(COALESCE(floor_stock, 0.0) - ?, 4))
+                        WHERE id = ?
+                    """, (round(produced_ctn * b["rate_per_ctn"], 4), b["material_id"]))
+
+    # Process opening stock if requested
+    if action in ("both", "opening_stock") and fg_stock_items:
+        # Update opening stock on relevant plans
+        plans_to_stock = conn.execute("""
+            SELECT p.id, p.sku_id, s.sku_code, s.name, s.ctn_size
             FROM production_plans p
             JOIN skus s ON p.sku_id = s.id
-            WHERE p.category_code = ? AND p.month_year = ?
-        """, (cat_code, month)).fetchall()
-        
-        if len(month_plans) > 0:
-            plans = month_plans
-        else:
-            # Auto-instantiate plans for active SKUs
-            skus = conn.execute("SELECT id, sku_code, name, ctn_size FROM skus WHERE category_code = ? LIMIT 8", (cat_code,)).fetchall()
-            max_id = int(conn.execute("SELECT COALESCE(MAX(id), 0) AS max_id FROM production_plans").fetchone()["max_id"] or 0)
-            new_plan_ids = []
-            for idx, sku in enumerate(skus):
-                p_no = f"PP-{cat_code}-{month.replace('-', '')}-{max_id + idx + 1:03d}"
+            WHERE p.category_code = ? AND (p.plan_date = ? OR p.month_year = ?)
+        """, (cat_code, target_date, target_month)).fetchall()
+
+        for pl in plans_to_stock:
+            sku_code = pl["sku_code"].strip()
+            sku_name_low = pl["name"].strip().lower()
+
+            matched_stock = None
+            if sku_code in fg_stock_items:
+                matched_stock = fg_stock_items[sku_code]['closing_stock']
+            elif sku_name_low in fg_stock_items:
+                matched_stock = fg_stock_items[sku_name_low]['closing_stock']
+            else:
+                for k, it in fg_stock_items.items():
+                    if sku_name_low in it['name'].lower() or it['name'].lower() in sku_name_low:
+                        matched_stock = it['closing_stock']
+                        break
+
+            if matched_stock is not None:
+                opening_ctn = round(matched_stock / (pl["ctn_size"] or 1), 1)
+                opening_pcs = opening_ctn * (pl["ctn_size"] or 1)
+                total_opening_ctn += opening_ctn
+
                 cursor.execute("""
-                    INSERT INTO production_plans (category_code, plan_no, month_year, plan_date, sku_id, planned_ctn, planned_pcs, opening_stock_ctn, opening_stock_pcs, created_by, notes)
-                    VALUES (?, ?, ?, ?, ?, 500, ?, 0, 0, 'Poloxy ERP Engine', ?)
-                """, (cat_code, p_no, month, date_from, sku["id"], 500 * sku["ctn_size"], f"Auto-created from ERP pull for {date_from}"))
-                new_plan_ids.append(cursor.lastrowid)
-                created_count += 1
-            conn.commit()
-            plans = conn.execute("""
-                SELECT p.id, p.plan_no, p.plan_date, p.planned_ctn, p.opening_stock_ctn, s.id AS sku_id, s.ctn_size, s.name, s.sku_code
-                FROM production_plans p
-                JOIN skus s ON p.sku_id = s.id
-                WHERE p.id IN ({})
-            """.format(",".join("?" * len(new_plan_ids))), new_plan_ids).fetchall()
+                    UPDATE production_plans
+                    SET opening_stock_ctn = ?,
+                        opening_stock_pcs = ?,
+                        godown_name = ?,
+                        poloxy_synced_at = ?
+                    WHERE id = ?
+                """, (opening_ctn, opening_pcs, godown_name, pull_timestamp, pl["id"]))
+                updated_count += 1
 
-    import hashlib
-    updated_count = 0
-    total_produced_ctn = 0
-    total_opening_ctn = 0
-    total_output_amount = 0.0
-
-    for p in plans:
-        seed_str = f"{p['plan_no']}_{date_from}_{date_to}_{p['sku_id']}_{datetime.now().strftime('%Y%m%d%H%M')}"
-        hash_val = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
-        
-        # 1. Opening Stock extraction (Rule 9: Godown Closing Section Quantity & Value)
-        opening_ctn = p["opening_stock_ctn"] or 0.0
-        opening_val = 0.0
-        if action in ("opening_stock", "both"):
-            # Dynamic Closing Stock from Poloxy Godown
-            opening_ratio = 0.15 + (hash_val % 25) / 100.0  # 15% to 40% of planned
-            opening_ctn = round(p["planned_ctn"] * opening_ratio, 0)
-            opening_pcs = opening_ctn * p["ctn_size"]
-            opening_val = round(opening_ctn * 1850.0, 2)
-            total_opening_ctn += opening_ctn
-        else:
-            opening_pcs = opening_ctn * p["ctn_size"]
-
-        # 2. Actual Produced Output extraction (Rule 8: Work Center Output Section, Main Product)
-        produced_ctn = 0.0
-        produced_pcs = 0.0
-        out_amount = 0.0
-        if action in ("actual_output", "both"):
-            ratio = 0.84 + ((hash_val >> 4) % 15) / 100.0 # 84% to 98%
-            produced_ctn = round(p["planned_ctn"] * ratio, 0)
-            produced_pcs = produced_ctn * p["ctn_size"]
-            out_amount = round(produced_ctn * 1920.0, 2)
-            total_produced_ctn += produced_ctn
-            total_output_amount += out_amount
-            new_status = 'Completed' if produced_ctn >= p["planned_ctn"] else 'In Production'
-        else:
-            new_status = 'Planned'
-
-        # Update production plan record
-        notes_detail = (
-            f"Poloxy ERP Live Pull ({date_display}) at {pull_timestamp}\n"
-            f"• Rule 9 (Opening Stock): Closing Stock of {prev_date_display} (Opening Stock of {plan_date_display}) from Godown [{godown_name}], Group [{group_name}]\n"
-            f"• Rule 8 (Actual Output): Work Center [{work_center}] [Type: Output | Product: Main Product]"
-        )
-
-        cursor.execute("""
-            UPDATE production_plans 
-            SET opening_stock_ctn = COALESCE(?, opening_stock_ctn),
-                opening_stock_pcs = COALESCE(?, opening_stock_pcs),
-                opening_stock_val = COALESCE(?, opening_stock_val),
-                actual_produced_ctn = CASE WHEN ? > 0 THEN ? ELSE actual_produced_ctn END,
-                actual_produced_pcs = CASE WHEN ? > 0 THEN ? ELSE actual_produced_pcs END,
-                output_amount = CASE WHEN ? > 0 THEN ? ELSE output_amount END,
-                status = CASE WHEN ? > 0 THEN ? ELSE status END,
-                plan_date = COALESCE(?, plan_date),
-                godown_name = ?,
-                work_center_name = ?,
-                poloxy_synced_at = ?,
-                notes = ?
-            WHERE id = ?
-        """, (
-            opening_ctn if action in ("opening_stock", "both") else None,
-            opening_pcs if action in ("opening_stock", "both") else None,
-            opening_val if action in ("opening_stock", "both") else None,
-            produced_ctn, produced_ctn,
-            produced_pcs, produced_pcs,
-            out_amount, out_amount,
-            produced_ctn, new_status,
-            date_from,
-            godown_name,
-            work_center,
-            pull_timestamp,
-            notes_detail,
-            p["id"]
-        ))
-        updated_count += 1
-        
     conn.commit()
     conn.close()
-    
-    action_labels = {
-        "actual_output": "Actual Produced Output",
-        "opening_stock": "Opening / In-Hand Stock (Closing Godown)",
-        "both": "Opening Stock & Actual Produced Output"
-    }
 
+    total_items = len(prod_items) if action in ("both", "actual_output") else len(fg_stock_items)
     resp = jsonify({
         "success": True,
-        "message": f"Successfully pulled live {action_labels.get(action, 'data')} for {date_display} from Poloxy ERP!",
+        "message": f"Poloxy ERP live data sync completed for {date_display}!",
         "action": action,
         "date_mode": mode,
         "date_range": date_display,
-        "rule_9_stock_concept": {
-            "plan_date": target_date_str,
-            "opening_stock_date": plan_date_display,
-            "closing_stock_date_used": prev_date_display,
-            "godown": godown_name,
-            "group": group_name,
-            "formula": f"Opening Stock of {plan_date_display} = Closing Stock of {prev_date_display}"
-        },
+        "poloxy_connected": poloxy_connected,
         "plans_updated": updated_count,
         "plans_created": created_count,
-        "total_opening_cartons": total_opening_ctn,
-        "total_produced_cartons": total_produced_ctn,
-        "total_output_amount": total_output_amount,
+        "items_found": total_items,
+        "total_opening_cartons": round(total_opening_ctn, 1),
+        "total_produced_cartons": round(total_produced_ctn, 1),
         "work_center": work_center,
         "godown_name": godown_name,
-        "group_name": group_name,
-        "live_timestamp": pull_timestamp,
-        "cache_bypassed": True
+        "live_timestamp": pull_timestamp
     })
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["Expires"] = "0"
     return resp
+
+@app.route("/api/materials/sync-poloxy", methods=["POST"])
+def sync_materials_poloxy():
+    """
+    Live sync of Raw Materials (Group: RAW MATERIAL / 14) and 
+    Packaging Materials (Group: PACKAGING MATERIAL / 10) from Poloxy Factory Godown.
+    """
+    data = request.json or {}
+    cat_code = str(data.get("category_code") or data.get("category") or "05")
+    date_str = data.get("date", datetime.now().strftime("%Y-%m-%d"))
+    
+    cfg = POLOXY_CONFIG.get(cat_code, POLOXY_CONFIG['05'])
+    godown_name = cfg['factory_godown_name']
+    godown_id = cfg['factory_godown_id']
+    
+    service = PoloxyService()
+    try:
+        service.login()
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to login to Poloxy ERP: {str(e)}"}), 500
+        
+    updated_items = []
+    conn = get_db()
+    cursor = conn.cursor()
+    pull_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    try:
+        # 1. Fetch RAW MATERIALS
+        rm_items = service.fetch_godown_stock_items(godown_name, godown_id, cfg['groups']['RM']['name'], cfg['groups']['RM']['id'], date_str)
+        # 2. Fetch PACKAGING MATERIALS
+        pm_items = service.fetch_godown_stock_items(godown_name, godown_id, cfg['groups']['PM']['name'], cfg['groups']['PM']['id'], date_str)
+        
+        all_poloxy = {}
+        all_poloxy.update(rm_items)
+        all_poloxy.update(pm_items)
+        
+        db_mats = cursor.execute("SELECT id, item_code, name, type, current_stock FROM materials WHERE category_code = ?", (cat_code,)).fetchall()
+        
+        batch_stmts = []
+        for m in db_mats:
+            m_code = m["item_code"].strip()
+            m_name_lower = m["name"].strip().lower()
+            
+            matched_stock = None
+            if m_code in all_poloxy:
+                matched_stock = all_poloxy[m_code]['closing_stock']
+            elif m_name_lower in all_poloxy:
+                matched_stock = all_poloxy[m_name_lower]['closing_stock']
+            else:
+                for p_key, p_val in all_poloxy.items():
+                    p_name = p_val['name'].strip().lower()
+                    if m_name_lower == p_name or (len(m_name_lower) > 4 and (m_name_lower in p_name or p_name in m_name_lower)):
+                        matched_stock = p_val['closing_stock']
+                        break
+                        
+            if matched_stock is not None:
+                old_stock = float(m["current_stock"] or 0.0)
+                new_stock = float(matched_stock)
+                diff = new_stock - old_stock
+                
+                batch_stmts.append((
+                    "UPDATE materials SET opening_stock = ?, current_stock = ?, poloxy_synced_at = ? WHERE id = ?",
+                    (new_stock, new_stock, pull_time, m["id"])
+                ))
+                batch_stmts.append((
+                    "INSERT INTO stock_ledger (material_id, category_code, date, opening_qty, in_qty, out_qty, closing_qty, txn_type, ref_no, notes, created_by) VALUES (?, ?, ?, ?, ?, 0.0, ?, 'POLOXY_SYNC', 'ERP-PULL', ?, ?)",
+                    (m["id"], cat_code, date_str, old_stock, diff, new_stock, f"Synced live from Poloxy Godown [{godown_name}]", get_current_user_name("System Admin"))
+                ))
+                
+                updated_items.append({
+                    "id": m["id"],
+                    "code": m["item_code"],
+                    "name": m["name"],
+                    "old_stock": old_stock,
+                    "new_stock": new_stock
+                })
+
+        if batch_stmts:
+            if hasattr(conn, 'execute_batch'):
+                conn.execute_batch(batch_stmts)
+            else:
+                for sql, prms in batch_stmts:
+                    cursor.execute(sql, prms)
+                
+        conn.commit()
+        conn.close()
+        invalidate_dashboard_cache()
+        return jsonify({
+            "success": True,
+            "message": f"Successfully synced {len(updated_items)} materials with live Poloxy ERP closing stock!",
+            "updated_count": len(updated_items),
+            "godown_name": godown_name,
+            "poloxy_total_rm": len(rm_items),
+            "poloxy_total_pm": len(pm_items),
+            "sync_time": pull_time,
+            "items": updated_items[:20]
+        })
+    except Exception as e:
+        conn.close()
+        return jsonify({"success": False, "error": f"Error pulling Poloxy stock: {str(e)}"}), 500
+
+@app.route("/api/reports/stock-ledger", methods=["GET"])
+def get_stock_ledger():
+    cat = request.args.get("category", "05").strip()
+    date_from = request.args.get("date_from", "")
+    date_to = request.args.get("date_to", "")
+    m_type = request.args.get("type", "")
+    
+    conn = get_db()
+    sql = """
+        SELECT sl.*, m.item_code, m.name AS material_name, m.unit, m.type AS material_type
+        FROM stock_ledger sl
+        JOIN materials m ON sl.material_id = m.id
+        WHERE 1=1
+    """
+    params = []
+    if cat and cat != 'ALL':
+        sql += " AND sl.category_code = ?"
+        params.append(cat)
+    if date_from:
+        sql += " AND sl.date >= ?"
+        params.append(date_from)
+    if date_to:
+        sql += " AND sl.date <= ?"
+        params.append(date_to)
+    if m_type:
+        sql += " AND m.type = ?"
+        params.append(m_type)
+        
+    sql += " ORDER BY sl.date DESC, sl.id DESC LIMIT 500"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return jsonify(rows_to_dict(rows))
 
 @app.route("/api/erp/pull-opening-stock", methods=["POST"])
 def pull_erp_opening_stock():
@@ -719,7 +896,7 @@ def invalidate_dashboard_cache():
 @app.route("/api/dashboard/stats", methods=["GET"])
 def get_dashboard_stats():
     cat = request.args.get("category", "").strip()
-    month = request.args.get("month", "2026-07").strip()
+    month = request.args.get("month", current_month()).strip()
     uom = request.args.get("uom", "Packet").strip()
     force_refresh = request.args.get("refresh", "0") == "1"
     
@@ -1066,7 +1243,7 @@ def create_material():
             cursor.execute("""
                 INSERT INTO store_transactions (material_id, txn_type, qty, balance_after, reference_no, notes, created_by)
                 VALUES (?, 'INITIAL', ?, ?, 'INIT-CREATE', 'Created with initial stock', ?)
-            """, (new_id, current_stock, current_stock, CURRENT_SESSION.get("name", "System Admin")))
+            """, (new_id, current_stock, current_stock, get_current_user_name("System Admin")))
             
         conn.commit()
         conn.close()
@@ -1251,7 +1428,7 @@ def calculate_bom_requirement():
 # ----------------- SALES FORECAST & SMART SUGGESTION -----------------
 @app.route("/api/forecast", methods=["GET"])
 def get_forecast():
-    month = request.args.get("month", "2026-07")
+    month = request.args.get("month", current_month())
     cat = request.args.get("category", "").strip()
     uom = request.args.get("uom", "Packet") # 'Packet' or 'Carton'
     
@@ -1307,7 +1484,7 @@ def save_forecast():
     if not allowed:
         return err_resp, err_code
     data = request.json or {}
-    month = data.get("month", "2026-07")
+    month = data.get("month", current_month())
     items = data.get("items", []) # [{sku_id, forecast_ctn, week1_ctn, week2_ctn, week3_ctn, week4_ctn}]
     revision_date = data.get("revision_date", datetime.now().strftime("%Y-%m-%d"))
     revision_reason = data.get("revision_reason") or data.get("revision_notes") or "Monthly Forecast Update"
@@ -1401,7 +1578,7 @@ def save_forecast():
 
 @app.route("/api/forecast/revisions", methods=["GET"])
 def get_forecast_revisions():
-    month = request.args.get("month", "2026-07")
+    month = request.args.get("month", current_month())
     sku_id = request.args.get("sku_id")
     conn = get_db()
     sql = """
@@ -1426,7 +1603,7 @@ def download_forecast_template():
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     
     cat = request.args.get("category", "05")
-    month = request.args.get("month", "2026-07")
+    month = request.args.get("month", current_month())
     
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -1501,17 +1678,22 @@ def download_forecast_template():
 @app.route("/api/production/suggest", methods=["GET"])
 def suggest_production_plan():
     cat = request.args.get("category", "05")
-    month = request.args.get("month", "2026-07")
+    month = request.args.get("month", datetime.now().strftime("%Y-%m"))
     
     conn = get_db()
     sql = """
         SELECT s.id AS sku_id, s.category_code, s.sku_code, s.name AS sku_name, s.ctn_size, s.pack_size,
-               COALESCE(sf.forecast_ctn, 0) AS forecast_ctn
+               COALESCE(sf.forecast_ctn, 0.0) AS forecast_ctn,
+               COALESCE((
+                   SELECT opening_stock_ctn FROM production_plans 
+                   WHERE sku_id = s.id AND month_year = ? 
+                   ORDER BY plan_date ASC LIMIT 1
+               ), 0.0) AS real_fg_stock
         FROM skus s
         LEFT JOIN sales_forecast sf ON s.id = sf.sku_id AND sf.month_year = ?
         WHERE s.status = 'Active'
     """
-    params = [month]
+    params = [month, month]
     if cat and cat != 'ALL':
         sql += " AND s.category_code = ?"
         params.append(cat)
@@ -1520,18 +1702,16 @@ def suggest_production_plan():
     rows = conn.execute(sql, params).fetchall()
     conn.close()
     
-    import random
     suggestions = []
     for r in rows:
-        fc = r["forecast_ctn"]
-        # Simulated ERP Finished Goods closing stock (or target buffer)
-        est_fg_stock = round(fc * random.uniform(0.1, 0.25), 0)
-        safety_buffer = round(fc * 0.15, 0)
+        fc = float(r["forecast_ctn"] or 0.0)
+        fg_stock = float(r["real_fg_stock"] or 0.0)
+        safety_buffer = round(fc * 0.10, 0)
         
-        # Suggested: Forecast + Safety Buffer - Existing FG Stock
-        suggested = max(0.0, round((fc + safety_buffer) - est_fg_stock, 0))
-        if fc > 0 and suggested == 0:
-            suggested = fc
+        # Net Requirement: Forecast + Safety Buffer - Existing In-Hand FG Stock
+        suggested = max(0.0, round((fc + safety_buffer) - fg_stock, 0))
+        if fc > 0 and suggested == 0 and fg_stock < fc:
+            suggested = round(fc - fg_stock, 0)
             
         suggestions.append({
             "sku_id": r["sku_id"],
@@ -1539,7 +1719,7 @@ def suggest_production_plan():
             "sku_name": r["sku_name"],
             "ctn_size": r["ctn_size"],
             "forecast_ctn": fc,
-            "est_fg_stock": est_fg_stock,
+            "est_fg_stock": fg_stock,
             "safety_buffer": safety_buffer,
             "suggested_ctn": suggested,
             "suggested_pcs": suggested * r["ctn_size"]
@@ -1558,7 +1738,7 @@ def realign_production_from_forecast():
         return err_resp, err_code
         
     data = request.json or {}
-    month = data.get("month", "2026-07")
+    month = data.get("month", current_month())
     cat = data.get("category", "05")
     effective_date = data.get("effective_date", datetime.now().strftime("%Y-%m-%d"))
     
@@ -1617,10 +1797,23 @@ def realign_production_from_forecast():
                         # Update Requisition
                         req = cursor.execute("SELECT id FROM material_requisitions WHERE plan_id = ?", (fp["id"],)).fetchone()
                         if req:
-                            bom_rows = cursor.execute("SELECT material_id, rate_per_ctn FROM bom WHERE sku_id = ?", (sku["id"],)).fetchall()
+                            bom_rows = cursor.execute("""
+                                SELECT b.material_id, b.rate_per_ctn,
+                                       COALESCE(m.current_stock, 0.0) AS current_stock,
+                                       COALESCE(m.in_transit, 0.0) AS in_transit
+                                FROM bom b
+                                JOIN materials m ON b.material_id = m.id
+                                WHERE b.sku_id = ?
+                            """, (sku["id"],)).fetchall()
                             for b in bom_rows:
-                                req_qty = round(new_ctn * b["rate_per_ctn"], 2)
-                                cursor.execute("UPDATE requisition_items SET required_qty = ? WHERE requisition_id = ? AND material_id = ?", (req_qty, req["id"], b["material_id"]))
+                                gross_req = round(new_ctn * b["rate_per_ctn"], 2)
+                                avail_stock = round(float(b["current_stock"]) + float(b["in_transit"]), 2)
+                                net_req = max(0.0, round(gross_req - avail_stock, 2))
+                                cursor.execute("""
+                                    UPDATE requisition_items 
+                                    SET gross_required_qty = ?, available_stock = ?, required_qty = ? 
+                                    WHERE requisition_id = ? AND material_id = ?
+                                """, (gross_req, avail_stock, net_req, req["id"], b["material_id"]))
                 else:
                     # Create a new daily plan for effective_date or month end
                     max_id = int(cursor.execute("SELECT MAX(id) FROM production_plans").fetchone()[0] or 0)
@@ -1632,22 +1825,32 @@ def realign_production_from_forecast():
                     cursor.execute("""
                         INSERT INTO production_plans (category_code, plan_no, month_year, plan_date, sku_id, planned_ctn, planned_pcs, opening_stock_ctn, opening_stock_pcs, actual_produced_ctn, actual_produced_pcs, status, created_by, notes)
                         VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0.0, 0.0, 0.0, 'Planned', ?, 'Auto-adjusted daily plan for revised sales forecast')
-                    """, (sku["category_code"], plan_no, month, plan_date, sku["id"], planned_ctn, planned_pcs, CURRENT_SESSION.get("name", "System Admin")))
+                    """, (sku["category_code"], plan_no, month, plan_date, sku["id"], planned_ctn, planned_pcs, get_current_user_name("System Admin")))
                     plan_id = int(cursor.lastrowid or (max_id + 1))
                     
                     req_no = f"MR-{sku['category_code']}-{month.replace('-', '')}-{plan_id:03d}"
                     cursor.execute("""
                         INSERT INTO material_requisitions (category_code, req_no, plan_id, month_year, req_date, status, requested_by, remarks)
                         VALUES (?, ?, ?, ?, ?, 'Pending', ?, 'Auto-requisition for revised sales forecast plan')
-                    """, (sku["category_code"], req_no, plan_id, month, plan_date, CURRENT_SESSION.get("name", "System Admin")))
+                    """, (sku["category_code"], req_no, plan_id, month, plan_date, get_current_user_name("System Admin")))
                     req_id = cursor.lastrowid
                     
-                    bom_rows = cursor.execute("SELECT material_id, rate_per_ctn, unit FROM bom WHERE sku_id = ?", (sku["id"],)).fetchall()
+                    bom_rows = cursor.execute("""
+                        SELECT b.material_id, b.rate_per_ctn, b.unit,
+                               COALESCE(m.current_stock, 0.0) AS current_stock,
+                               COALESCE(m.in_transit, 0.0) AS in_transit
+                        FROM bom b
+                        JOIN materials m ON b.material_id = m.id
+                        WHERE b.sku_id = ?
+                    """, (sku["id"],)).fetchall()
                     for b in bom_rows:
+                        gross_req = round(planned_ctn * b["rate_per_ctn"], 2)
+                        avail_stock = round(float(b["current_stock"]) + float(b["in_transit"]), 2)
+                        net_req = max(0.0, round(gross_req - avail_stock, 2))
                         cursor.execute("""
-                            INSERT INTO requisition_items (requisition_id, material_id, required_qty, issued_qty, unit, status)
-                            VALUES (?, ?, ?, 0.0, ?, 'Pending')
-                        """, (req_id, b["material_id"], round(planned_ctn * b["rate_per_ctn"], 2), b["unit"]))
+                            INSERT INTO requisition_items (requisition_id, material_id, gross_required_qty, available_stock, required_qty, issued_qty, unit, status)
+                            VALUES (?, ?, ?, ?, ?, 0.0, ?, 'Pending')
+                        """, (req_id, b["material_id"], gross_req, avail_stock, net_req, b["unit"]))
                 
                 realigned_items.append({
                     "sku_code": sku["sku_code"],
@@ -1711,7 +1914,7 @@ def create_production_plan():
         return err_resp, err_code
     data = request.json or {}
     sku_id = data.get("sku_id")
-    month_year = data.get("month_year", "2026-07")
+    month_year = data.get("month_year", current_month())
     planned_ctn = float(data.get("planned_ctn", 0))
     opening_stock_ctn = float(data.get("opening_stock_ctn", 0.0))
     notes = data.get("notes", "")
@@ -1734,7 +1937,7 @@ def create_production_plan():
         cursor.execute("""
             INSERT INTO production_plans (category_code, plan_no, month_year, plan_date, sku_id, planned_ctn, planned_pcs, opening_stock_ctn, opening_stock_pcs, actual_produced_ctn, actual_produced_pcs, status, created_by, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, 0.0, 'Planned', ?, ?)
-        """, (cat_code, plan_no, month_year, plan_date, sku_id, planned_ctn, planned_pcs, opening_stock_ctn, opening_stock_pcs, CURRENT_SESSION.get("name", "System Admin"), notes))
+        """, (cat_code, plan_no, month_year, plan_date, sku_id, planned_ctn, planned_pcs, opening_stock_ctn, opening_stock_pcs, get_current_user_name("System Admin"), notes))
         plan_id = int(cursor.lastrowid or (max_id + 1))
         
         if data.get("auto_create_requisition", True):
@@ -1742,16 +1945,25 @@ def create_production_plan():
             cursor.execute("""
                 INSERT INTO material_requisitions (category_code, req_no, plan_id, month_year, req_date, status, requested_by, remarks)
                 VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?)
-            """, (cat_code, req_no, plan_id, month_year, plan_date, CURRENT_SESSION.get("name", "System Admin"), f"Auto-generated requisition for plan {plan_no}"))
+            """, (cat_code, req_no, plan_id, month_year, plan_date, get_current_user_name("System Admin"), f"Auto-generated requisition for plan {plan_no}"))
             req_id = cursor.lastrowid
             
-            bom_rows = cursor.execute("SELECT material_id, rate_per_ctn, unit FROM bom WHERE sku_id = ?", (sku_id,)).fetchall()
+            bom_rows = cursor.execute("""
+                SELECT b.material_id, b.rate_per_ctn, b.unit,
+                       COALESCE(m.current_stock, 0.0) AS current_stock,
+                       COALESCE(m.in_transit, 0.0) AS in_transit
+                FROM bom b
+                JOIN materials m ON b.material_id = m.id
+                WHERE b.sku_id = ?
+            """, (sku_id,)).fetchall()
             for b in bom_rows:
-                req_qty = round(planned_ctn * b["rate_per_ctn"], 2)
+                gross_req = round(planned_ctn * b["rate_per_ctn"], 2)
+                avail_stock = round(float(b["current_stock"]) + float(b["in_transit"]), 2)
+                net_req = max(0.0, round(gross_req - avail_stock, 2))
                 cursor.execute("""
-                    INSERT INTO requisition_items (requisition_id, material_id, required_qty, issued_qty, unit, status)
-                    VALUES (?, ?, ?, 0.0, ?, 'Pending')
-                """, (req_id, b["material_id"], req_qty, b["unit"]))
+                    INSERT INTO requisition_items (requisition_id, material_id, gross_required_qty, available_stock, required_qty, issued_qty, unit, status)
+                    VALUES (?, ?, ?, ?, ?, 0.0, ?, 'Pending')
+                """, (req_id, b["material_id"], gross_req, avail_stock, net_req, b["unit"]))
                 
         conn.commit()
         conn.close()
@@ -1765,7 +1977,7 @@ def create_production_plan():
 
 @app.route("/api/production/plans/<int:plan_id>/update-output", methods=["POST"])
 def update_production_output(plan_id):
-    allowed, err_resp, err_code = check_role_permission(["Production"], "update production output")
+    allowed, err_resp, err_code = check_role_permission([], "manually edit production output (actual output comes from Poloxy - use Import Actual Output)")
     if not allowed:
         return err_resp, err_code
     data = request.json or {}
@@ -1902,7 +2114,7 @@ def adjust_store_stock():
         cursor.execute("""
             INSERT INTO store_transactions (material_id, txn_type, qty, balance_after, reference_no, notes, created_by)
             VALUES (?, 'ADJUSTMENT', ?, ?, 'AUDIT-ADJ', ?, ?)
-        """, (material_id, diff, new_stock, notes, CURRENT_SESSION.get("name", "System Admin")))
+        """, (material_id, diff, new_stock, notes, get_current_user_name("System Admin")))
         conn.commit()
         conn.close()
         return jsonify({"success": True})
@@ -1962,14 +2174,14 @@ def create_mrr_entry():
         cursor.execute("""
             INSERT INTO mrr_entries (category_code, mrr_no, mrr_date, supplier_name, chalan_no, material_id, received_qty, unit_price, total_amount, vehicle_no, remarks, created_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (cat_code, mrr_no, mrr_date, supplier, chalan, material_id, received_qty, unit_price, tot_amount, vehicle, remarks, CURRENT_SESSION.get("name", "System Admin")))
+        """, (cat_code, mrr_no, mrr_date, supplier, chalan, material_id, received_qty, unit_price, tot_amount, vehicle, remarks, get_current_user_name("System Admin")))
         
         cursor.execute("UPDATE materials SET current_stock = ? WHERE id = ?", (new_stock, material_id))
         
         cursor.execute("""
             INSERT INTO store_transactions (material_id, txn_type, qty, balance_after, reference_no, notes, created_by)
             VALUES (?, 'MRR_ENTRY', ?, ?, ?, ?, ?)
-        """, (material_id, received_qty, new_stock, mrr_no, f"MRR Received from {supplier} (Chalan: {chalan})", CURRENT_SESSION.get("name", "System Admin")))
+        """, (material_id, received_qty, new_stock, mrr_no, f"MRR Received from {supplier} (Chalan: {chalan})", get_current_user_name("System Admin")))
         
         conn.commit()
         conn.close()
@@ -2161,7 +2373,7 @@ def log_floor_stock():
         cursor.execute("""
             INSERT INTO floor_stock_logs (material_id, category_code, log_date, shift, previous_floor_stock, actual_floor_stock, variance, logged_by, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (mat_id, mat["category_code"], log_date, shift, prev_floor, actual_floor_stock, variance, CURRENT_SESSION.get("name", "Production Supervisor"), notes))
+        """, (mat_id, mat["category_code"], log_date, shift, prev_floor, actual_floor_stock, variance, get_current_user_name("Production Supervisor"), notes))
 
         cursor.execute("UPDATE materials SET floor_stock = ? WHERE id = ?", (actual_floor_stock, mat_id))
         conn.commit()
@@ -2284,107 +2496,6 @@ def download_mrr_template():
     buf.seek(0)
     return send_file(buf, as_attachment=True, download_name=f"Paragon_MRR_Stock_Inward_Template_{cat}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-@app.route("/api/store/mrr/bulk-upload", methods=["POST"])
-def bulk_upload_mrr():
-    """
-    Bulk uploads MRR Stock Inward records from Excel file.
-    Validates Item Code, updates materials stock, and logs store transactions.
-    """
-    allowed, err_resp, err_code = check_role_permission(["Store"], "bulk upload MRR entries")
-    if not allowed:
-        return err_resp, err_code
-        
-    if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
-    file = request.files["file"]
-    if not file.filename:
-        return jsonify({"error": "Empty filename"}), 400
-        
-    import openpyxl
-    try:
-        wb = openpyxl.load_workbook(file, data_only=True)
-        ws = wb.active
-        
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # Load material lookup map
-        mat_rows = cursor.execute("SELECT id, item_code, category_code, current_stock, unit_price FROM materials").fetchall()
-        mat_map = {m["item_code"].strip().upper(): m for m in mat_rows}
-        
-        success_count = 0
-        errors = []
-        now_str = datetime.now().strftime("%Y-%m-%d")
-        
-        # Rows start at 4
-        for r_idx in range(4, ws.max_row + 1):
-            item_code_val = ws.cell(r_idx, 2).value
-            if not item_code_val:
-                continue
-            item_code = str(item_code_val).strip().upper()
-            if item_code not in mat_map:
-                errors.append(f"Row {r_idx}: Item Code '{item_code}' not found in system.")
-                continue
-                
-            mat = mat_map[item_code]
-            mat_id = mat["id"]
-            cat_code = mat["category_code"]
-            
-            # Read inputs
-            mrr_date = str(ws.cell(r_idx, 4).value or now_str).strip()[:10]
-            supplier = str(ws.cell(r_idx, 5).value or "Standard Supplier").strip()
-            chalan = str(ws.cell(r_idx, 6).value or f"CH-{datetime.now().strftime('%Y%m')}-{r_idx}").strip()
-            
-            try:
-                qty = float(ws.cell(r_idx, 7).value or 0.0)
-            except Exception:
-                qty = 0.0
-                
-            if qty <= 0:
-                errors.append(f"Row {r_idx}: Invalid quantity {qty} for {item_code}.")
-                continue
-                
-            try:
-                price = float(ws.cell(r_idx, 8).value or mat["unit_price"] or 0.0)
-            except Exception:
-                price = float(mat["unit_price"] or 0.0)
-                
-            vehicle = str(ws.cell(r_idx, 9).value or "").strip()
-            remarks = str(ws.cell(r_idx, 10).value or "Bulk Excel Inward").strip()
-            
-            max_id = int(cursor.execute("SELECT COALESCE(MAX(id), 0) FROM mrr_entries").fetchone()[0] or 0)
-            mrr_no = f"MRR-{cat_code}-{datetime.now().strftime('%Y%m')}-{max_id + 1:03d}"
-            total_amt = round(qty * price, 2)
-            new_stock = round(mat["current_stock"] + qty, 2)
-            
-            cursor.execute("""
-                INSERT INTO mrr_entries (category_code, mrr_no, mrr_date, supplier_name, chalan_no, material_id, received_qty, unit_price, total_amount, vehicle_no, remarks, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (cat_code, mrr_no, mrr_date, supplier, chalan, mat_id, qty, price, total_amt, vehicle, remarks, CURRENT_SESSION.get("name", "Store Staff")))
-            
-            cursor.execute("UPDATE materials SET current_stock = ? WHERE id = ?", (new_stock, mat_id))
-            mat["current_stock"] = new_stock
-            
-            cursor.execute("""
-                INSERT INTO store_transactions (material_id, txn_type, qty, balance_after, reference_no, notes, created_by)
-                VALUES (?, 'MRR_ENTRY', ?, ?, ?, ?, ?)
-            """, (mat_id, qty, new_stock, mrr_no, f"Bulk MRR from {supplier} (Chalan: {chalan})", CURRENT_SESSION.get("name", "Store Staff")))
-            
-            success_count += 1
-            
-        conn.commit()
-        conn.close()
-        
-        return jsonify({
-            "success": True,
-            "processed_count": success_count,
-            "errors": errors,
-            "message": f"Successfully inwarded {success_count} materials via MRR bulk upload!"
-        })
-    except Exception as e:
-        return jsonify({"error": f"Failed to process Excel file: {str(e)}"}), 400
-
-
 # ----------------- PRODUCTION MATERIAL REQUISITIONS (SEPARATE TAB) -----------------
 @app.route("/api/requisitions/production", methods=["GET"])
 def get_production_requisitions():
@@ -2495,10 +2606,10 @@ def issue_requisition_materials(req_id):
             cursor.execute("""
                 INSERT INTO store_transactions (material_id, txn_type, qty, balance_after, reference_no, notes, created_by)
                 VALUES (?, 'ISSUE_PRODUCTION', ?, ?, ?, ?, ?)
-            """, (m_id, -issue_qty, new_stk, req["req_no"], f"Issued to production (Req #{req['req_no']})", CURRENT_SESSION.get("name", "System Admin")))
+            """, (m_id, -issue_qty, new_stk, req["req_no"], f"Issued to production (Req #{req['req_no']})", get_current_user_name("System Admin")))
             
         final_status = 'Issued' if all_fulfilled else 'Partially Issued'
-        cursor.execute("UPDATE material_requisitions SET status = ?, issued_by = ?, issued_date = CURRENT_TIMESTAMP WHERE id = ?", (final_status, CURRENT_SESSION.get("name", "System Admin"), req_id))
+        cursor.execute("UPDATE material_requisitions SET status = ?, issued_by = ?, issued_date = CURRENT_TIMESTAMP WHERE id = ?", (final_status, get_current_user_name("System Admin"), req_id))
         
         conn.commit()
         conn.close()
@@ -2566,12 +2677,12 @@ def create_wastage_entry():
             cursor.execute("""
                 INSERT INTO store_transactions (material_id, txn_type, qty, balance_after, reference_no, notes, created_by)
                 VALUES (?, 'WASTAGE', ?, ?, 'SCRAP-ENTRY', ?, ?)
-            """, (item_id, -qty, new_stk, f"Wastage: {reason} ({batch_no})", CURRENT_SESSION.get("name", "System Admin")))
+            """, (item_id, -qty, new_stk, f"Wastage: {reason} ({batch_no})", get_current_user_name("System Admin")))
             
         cursor.execute("""
             INSERT INTO wastage_entries (category_code, date, item_type, item_id, batch_no, qty, unit, reason, estimated_cost, remarks, created_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (cat_code, date_val, item_type, item_id, batch_no, qty, unit, reason, cost, remarks, CURRENT_SESSION.get("name", "System Admin")))
+        """, (cat_code, date_val, item_type, item_id, batch_no, qty, unit, reason, cost, remarks, get_current_user_name("System Admin")))
         
         conn.commit()
         conn.close()
@@ -2609,7 +2720,7 @@ def raise_purchase_requisition():
     data = request.json or {}
     material_id = data.get("material_id")
     req_qty = float(data.get("req_qty", 0.0))
-    month_year = data.get("month_year", "2026-07")
+    month_year = data.get("month_year", current_month())
     priority = data.get("priority", "Medium")
     remarks = data.get("remarks", "")
     
@@ -2632,7 +2743,7 @@ def raise_purchase_requisition():
         cursor.execute("""
             INSERT INTO purchase_requisitions (category_code, po_no, month_year, material_id, req_qty, unit_price, total_value, supplier_name, lead_time_days, priority, status, created_by, remarks)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?, ?)
-        """, (cat_code, po_no, month_year, material_id, req_qty, unit_price, total_val, supplier, lead_time, priority, CURRENT_SESSION.get("name", "System Admin"), remarks))
+        """, (cat_code, po_no, month_year, material_id, req_qty, unit_price, total_val, supplier, lead_time, priority, get_current_user_name("System Admin"), remarks))
         
         conn.commit()
         conn.close()
@@ -2643,7 +2754,7 @@ def raise_purchase_requisition():
 
 @app.route("/api/requisitions/purchase/auto-generate", methods=["POST"])
 def auto_generate_purchase_requisitions():
-    month = request.json.get("month", "2026-07") if request.json else "2026-07"
+    month = request.json.get("month", current_month()) if request.json else current_month()
     cat = request.json.get("category", "") if request.json else ""
     
     conn = get_db()
@@ -2675,7 +2786,7 @@ def auto_generate_purchase_requisitions():
             cursor.execute("""
                 INSERT INTO purchase_requisitions (category_code, po_no, month_year, material_id, req_qty, unit_price, total_value, supplier_name, lead_time_days, priority, status, created_by, remarks)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'High', 'Pending', ?, 'Auto-generated replenishment for safety stock threshold')
-            """, (mat["category_code"], po_no, month, mat["id"], req_qty, mat["unit_price"], tot_val, mat["supplier_name"], mat["lead_time_days"], CURRENT_SESSION.get("name", "System Admin")))
+            """, (mat["category_code"], po_no, month, mat["id"], req_qty, mat["unit_price"], tot_val, mat["supplier_name"], mat["lead_time_days"], get_current_user_name("System Admin")))
             created_count += 1
             
         conn.commit()
@@ -2733,7 +2844,7 @@ def receive_goods_grn(po_id):
         cursor.execute("""
             INSERT INTO store_transactions (material_id, txn_type, qty, balance_after, reference_no, notes, created_by)
             VALUES (?, 'RECEIPT_GRN', ?, ?, ?, ?, ?)
-        """, (m_id, received_qty, new_curr, f"GRN-{pr['po_no']}", f"Goods received against PO #{pr['po_no']}", CURRENT_SESSION.get("name", "System Admin")))
+        """, (m_id, received_qty, new_curr, f"GRN-{pr['po_no']}", f"Goods received against PO #{pr['po_no']}", get_current_user_name("System Admin")))
         
         conn.commit()
         conn.close()
@@ -2745,7 +2856,7 @@ def receive_goods_grn(po_id):
 # ----------------- REPORTS & EXPORTS -----------------
 @app.route("/api/reports/forecast-vs-production", methods=["GET"])
 def report_forecast_vs_production():
-    month = request.args.get("month", "2026-07")
+    month = request.args.get("month", current_month())
     cat = request.args.get("category", "").strip()
     uom = request.args.get("uom", "Packet")
     date_from = request.args.get("date_from", "").strip()
@@ -2847,86 +2958,13 @@ def report_stock_summary():
 
 # ----------------- BULK UPLOAD & TEMPLATE ENDPOINTS -----------------
 
-@app.route("/api/forecast/bulk-upload", methods=["POST"])
-def bulk_upload_forecast():
-    allowed, err_resp, err_code = check_role_permission(["Sales"], "bulk upload sales forecast")
-    if not allowed:
-        return err_resp, err_code
-    import openpyxl
-    if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
-    file = request.files["file"]
-    month = request.form.get("month", "2026-07")
-    
-    try:
-        wb = openpyxl.load_workbook(file, data_only=True)
-        ws = wb.active
-        
-        # Determine column indices from header row (row 3 or row 1)
-        header_row = 3
-        sku_col = None
-        fc_col = None
-        
-        for r in range(1, 6):
-            for c in range(1, 15):
-                val = str(ws.cell(r, c).value or "").strip().lower()
-                if "sku code" in val or "item code" in val or val == "sku":
-                    sku_col = c
-                    header_row = r
-                elif "forecast" in val:
-                    fc_col = c
-                    
-        if not sku_col or not fc_col:
-            # Fallback to standard columns: col 2 = SKU Code, col 6 = Forecast
-            sku_col = 2
-            fc_col = 6
-            header_row = 3
-            
-        conn = get_db()
-        cursor = conn.cursor()
-        updated_count = 0
-        
-        for r in range(header_row + 1, ws.max_row + 1):
-            code_val = ws.cell(r, sku_col).value
-            if not code_val:
-                continue
-            code_str = str(code_val).strip()
-            
-            # Lookup SKU by code
-            sku = conn.execute("SELECT id FROM skus WHERE sku_code = ?", (code_str,)).fetchone()
-            if not sku:
-                continue
-            sku_id = sku["id"]
-            
-            raw_val = ws.cell(r, fc_col).value
-            try:
-                fc_val = float(raw_val or 0.0)
-            except (ValueError, TypeError):
-                fc_val = 0.0
-                
-            cursor.execute("""
-                INSERT INTO sales_forecast (sku_id, month_year, forecast_ctn, created_by, updated_at)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(sku_id, month_year) DO UPDATE SET
-                    forecast_ctn = excluded.forecast_ctn,
-                    created_by = excluded.created_by,
-                    updated_at = CURRENT_TIMESTAMP
-            """, (sku_id, month, fc_val, CURRENT_SESSION.get("name", "Bulk Upload")))
-            updated_count += 1
-            
-        conn.commit()
-        conn.close()
-        return jsonify({"success": True, "count": updated_count, "message": f"Successfully updated forecast for {updated_count} SKUs ({month})"})
-    except Exception as e:
-        return jsonify({"error": f"Failed to parse Excel file: {str(e)}"}), 400
-
 @app.route("/api/production/template", methods=["GET"])
 def download_production_template():
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     
     cat = request.args.get("category", "05")
-    month = request.args.get("month", "2026-07")
+    month = request.args.get("month", current_month())
     
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -2988,97 +3026,6 @@ def download_production_template():
     buf.seek(0)
     return send_file(buf, as_attachment=True, download_name=f"Paragon_Production_Plan_Template_{cat}_{month}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-@app.route("/api/production/bulk-upload", methods=["POST"])
-def bulk_upload_production_plans():
-    allowed, err_resp, err_code = check_role_permission(["Production"], "bulk upload production plans")
-    if not allowed:
-        return err_resp, err_code
-    import openpyxl
-    if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
-    file = request.files["file"]
-    cat = request.form.get("category", "05")
-    month = request.form.get("month", "2026-07")
-    
-    try:
-        wb = openpyxl.load_workbook(file, data_only=True)
-        ws = wb.active
-        
-        sku_col = 1
-        date_col = 4
-        carton_col = 5
-        notes_col = 6
-        header_row = 3
-        
-        for r in range(1, 5):
-            for c in range(1, 10):
-                val = str(ws.cell(r, c).value or "").strip().lower()
-                if "sku code" in val: sku_col = c; header_row = r
-                elif "plan date" in val: date_col = c
-                elif "planned carton" in val or "carton" in val: carton_col = c
-                elif "notes" in val: notes_col = c
-                
-        conn = get_db()
-        cursor = conn.cursor()
-        created_count = 0
-        
-        for r in range(header_row + 1, ws.max_row + 1):
-            code_val = ws.cell(r, sku_col).value
-            if not code_val:
-                continue
-            code_str = str(code_val).strip()
-            
-            sku = conn.execute("SELECT id, category_code, ctn_size FROM skus WHERE sku_code = ?", (code_str,)).fetchone()
-            if not sku:
-                continue
-                
-            try:
-                ctns = float(ws.cell(r, carton_col).value or 0.0)
-            except (ValueError, TypeError):
-                ctns = 0.0
-                
-            if ctns <= 0:
-                continue
-                
-            plan_date = str(ws.cell(r, date_col).value or f"{month}-01").strip()[:10]
-            notes = str(ws.cell(r, notes_col).value or "Bulk imported plan").strip()
-            cat_code = sku["category_code"]
-            
-            # Generate unique plan number
-            max_id = int(cursor.execute("SELECT MAX(id) FROM production_plans").fetchone()[0] or 0)
-            plan_no = f"PP-{cat_code}-{month.replace('-', '')}-{max_id + 1:03d}"
-            planned_pcs = ctns * sku["ctn_size"]
-            
-            cursor.execute("""
-                INSERT INTO production_plans (category_code, plan_no, month_year, plan_date, sku_id, planned_ctn, planned_pcs, created_by, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (cat_code, plan_no, month, plan_date, sku["id"], ctns, planned_pcs, CURRENT_SESSION.get("name", "Bulk Import"), notes))
-            plan_id = int(cursor.lastrowid or (max_id + 1))
-            
-            # Auto-generate Requisition
-            req_no = f"MR-{cat_code}-{month.replace('-', '')}-{plan_id:03d}"
-            cursor.execute("""
-                INSERT INTO material_requisitions (category_code, req_no, plan_id, month_year, req_date, requested_by, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (cat_code, req_no, plan_id, month, plan_date, CURRENT_SESSION.get("name", "Bulk Import"), f"Auto-generated requisition for {plan_no}"))
-            req_id = cursor.lastrowid
-            
-            # Insert BOM items into requisition
-            bom_items = conn.execute("SELECT material_id, rate_per_ctn FROM bom WHERE sku_id = ?", (sku["id"],)).fetchall()
-            for b in bom_items:
-                cursor.execute("""
-                    INSERT INTO requisition_items (requisition_id, material_id, required_qty)
-                    VALUES (?, ?, ?)
-                """, (req_id, b["material_id"], round(ctns * b["rate_per_ctn"], 2)))
-                
-            created_count += 1
-            
-        conn.commit()
-        conn.close()
-        return jsonify({"success": True, "count": created_count, "message": f"Successfully created {created_count} production plans with requisitions"})
-    except Exception as e:
-        return jsonify({"error": f"Failed to bulk upload production plans: {str(e)}"}), 400
-
 # ----------------- SUPER ADMIN DATA CLEAR & RESET -----------------
 @app.route("/api/admin/clear-data", methods=["POST"])
 def admin_clear_data():
@@ -3130,50 +3077,78 @@ def admin_clear_data():
                     cursor.execute("DELETE FROM sales_forecast")
             deleted_report["forecast"] = cursor.rowcount
 
-        # 2. Production Plans & Material Requisitions
+        # 2. Production Plans & Targets (Cascade deletes linked requisitions)
         if section in ("all", "production"):
             where, params = make_filter("plan_date", "category_code")
-            # Cascade deletes requisition items and requisitions
-            cursor.execute(f"DELETE FROM requisition_items WHERE requisition_id IN (SELECT id FROM material_requisitions {where})", params)
-            cursor.execute(f"DELETE FROM material_requisitions {where}", params)
+            # Correct cascade delete using subquery on production_plans
+            cursor.execute(f"""DELETE FROM requisition_items WHERE requisition_id IN (
+                SELECT id FROM material_requisitions WHERE plan_id IN (SELECT id FROM production_plans {where})
+            )""", params)
+            cursor.execute(f"""DELETE FROM material_requisitions WHERE plan_id IN (
+                SELECT id FROM production_plans {where}
+            )""", params)
             cursor.execute(f"DELETE FROM production_plans {where}", params)
             deleted_report["production_plans"] = cursor.rowcount
 
+        # 2b. Production Actual Output Only (Reset actual produced ctn & pcs to 0.0)
+        if section == "actual_output":
+            where, params = make_filter("plan_date", "category_code")
+            cursor.execute(f"UPDATE production_plans SET actual_produced_ctn = 0.0, actual_produced_pcs = 0.0 {where}", params)
+            deleted_report["actual_output_reset"] = cursor.rowcount
+
+        # 2c. Production Plan Targets Only (Reset planned ctn & pcs to 0.0)
+        if section == "production_target_only":
+            where, params = make_filter("plan_date", "category_code")
+            cursor.execute(f"UPDATE production_plans SET planned_ctn = 0.0, planned_pcs = 0.0 {where}", params)
+            deleted_report["production_target_reset"] = cursor.rowcount
+
         # 3. Material Requisitions only
-        if section == "requisitions":
+        if section in ("requisitions",):
             where, params = make_filter("req_date", "category_code")
             cursor.execute(f"DELETE FROM requisition_items WHERE requisition_id IN (SELECT id FROM material_requisitions {where})", params)
             cursor.execute(f"DELETE FROM material_requisitions {where}", params)
             deleted_report["requisitions"] = cursor.rowcount
 
-        # 4. MRR Inward Entries
-        if section in ("all", "mrr"):
+        # 4. Store & Inventory Stock (Reset Current, Floor, Safety Stock & In-Transit to 0)
+        if section in ("all", "store_stock", "store_all"):
+            cat_clause = " WHERE category_code = ?" if category != "ALL" else ""
+            cat_params = [category] if category != "ALL" else []
+            cursor.execute(f"UPDATE materials SET current_stock = 0.0, floor_stock = 0.0, safety_stock = 0.0, in_transit = 0.0 {cat_clause}", cat_params)
+            deleted_report["store_stock_reset"] = cursor.rowcount
+
+        # 5. MRR Inward Entries
+        if section in ("all", "mrr", "store_all"):
             where, params = make_filter("mrr_date", "category_code")
             cursor.execute(f"DELETE FROM mrr_entries {where}", params)
             deleted_report["mrr_entries"] = cursor.rowcount
 
-        # 5. Wastage Entries
-        if section in ("all", "wastage"):
+        # 6. Wastage Entries
+        if section in ("all", "wastage", "store_all"):
             where, params = make_filter("date", "category_code")
             cursor.execute(f"DELETE FROM wastage_entries {where}", params)
             deleted_report["wastage_entries"] = cursor.rowcount
 
-        # 6. Purchase Requisitions (Procurement)
+        # 7. Purchase Requisitions (Procurement)
         if section in ("all", "procurement"):
             where, params = make_filter("created_at", "category_code")
             cursor.execute(f"DELETE FROM purchase_requisitions {where}", params)
             deleted_report["purchase_requisitions"] = cursor.rowcount
+            # Reset in_transit stock on materials so no orphan transit amounts remain
+            cat_clause = " WHERE category_code = ?" if category != "ALL" else ""
+            cat_params = [category] if category != "ALL" else []
+            cursor.execute(f"UPDATE materials SET in_transit = 0.0 {cat_clause}", cat_params)
 
-        # 7. Store Transactions (Historical logs)
-        if section in ("all", "store_txns"):
+        # 8. Store Transactions (Historical logs / Stock Ledger)
+        if section in ("all", "store_txns", "store_all"):
             if range_type == "custom" and from_date and to_date:
                 cursor.execute("DELETE FROM store_transactions WHERE txn_type != 'INITIAL' AND created_at >= ? AND created_at <= ?", (from_date, to_date + " 23:59:59"))
-            elif section == "store_txns":
+            else:
                 cursor.execute("DELETE FROM store_transactions WHERE txn_type != 'INITIAL'")
             deleted_report["store_transactions"] = cursor.rowcount
 
         conn.commit()
         conn.close()
+        invalidate_dashboard_cache()
         return jsonify({
             "success": True,
             "message": "Data cleanup executed successfully",
@@ -3192,7 +3167,7 @@ def export_excel_report():
     
     section = request.args.get("section", "all").strip().lower()
     cat = request.args.get("category", "05").strip()
-    month = request.args.get("month", "2026-07").strip()
+    month = request.args.get("month", current_month()).strip()
     uom = request.args.get("uom", "Packet").strip()
     
     wb = openpyxl.Workbook()
@@ -3567,6 +3542,9 @@ def export_excel_report():
     filename = f"Paragon_{section.capitalize()}_Report_Unit{cat}_{month}.xlsx"
     return send_file(buf, as_attachment=True, download_name=filename, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+
+from features import init_features
+init_features(app, get_db, check_role_permission, get_current_session, get_current_user_name, invalidate_dashboard_cache)
 
 @app.route("/")
 def index():
