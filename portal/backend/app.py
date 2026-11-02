@@ -925,8 +925,8 @@ def get_dashboard_stats():
             COUNT(*) AS total_materials,
             COALESCE(SUM(CASE WHEN type='RM' THEN 1 ELSE 0 END), 0) AS total_rm,
             COALESCE(SUM(CASE WHEN type='PM' THEN 1 ELSE 0 END), 0) AS total_pm,
-            COALESCE(SUM(CASE WHEN current_stock < safety_stock THEN 1 ELSE 0 END), 0) AS critical_count,
-            COALESCE(SUM(CASE WHEN current_stock >= safety_stock AND current_stock <= (safety_stock * 1.5) THEN 1 ELSE 0 END), 0) AS low_stock_count,
+            COALESCE(SUM(CASE WHEN safety_stock > 0 AND current_stock < safety_stock THEN 1 ELSE 0 END), 0) AS critical_count,
+            COALESCE(SUM(CASE WHEN safety_stock > 0 AND current_stock >= safety_stock AND current_stock <= (safety_stock * 1.5) THEN 1 ELSE 0 END), 0) AS low_stock_count,
             COALESCE(SUM(current_stock * unit_price), 0.0) AS total_val,
             COALESCE(SUM(CASE WHEN type='RM' THEN current_stock * unit_price ELSE 0 END), 0.0) AS rm_val,
             COALESCE(SUM(CASE WHEN type='PM' THEN current_stock * unit_price ELSE 0 END), 0.0) AS pm_val
@@ -938,7 +938,7 @@ def get_dashboard_stats():
     total_pm = mat_row["total_pm"] or 0
     critical_count = mat_row["critical_count"] or 0
     low_stock_count = mat_row["low_stock_count"] or 0
-    safe_count = max(0, total_materials - critical_count - low_stock_count)
+    safe_count = max(0, total_materials - critical_count - low_stock_count) if (critical_count > 0 or low_stock_count > 0 or (mat_row["total_val"] or 0) > 0) else 0
     total_valuation = mat_row["total_val"] or 0.0
     rm_valuation = mat_row["rm_val"] or 0.0
     pm_valuation = mat_row["pm_val"] or 0.0
@@ -1004,7 +1004,7 @@ def get_dashboard_stats():
         SELECT id, item_code, name, type, unit, current_stock, safety_stock, in_transit, supplier_name, unit_price,
                ROUND(safety_stock - current_stock, 1) AS deficit
         FROM materials
-        WHERE current_stock < safety_stock {cat_filter}
+        WHERE safety_stock > 0 AND current_stock < safety_stock {cat_filter}
         ORDER BY (safety_stock - current_stock) DESC
         LIMIT 8
     """, params).fetchall()
@@ -3153,6 +3153,34 @@ def admin_clear_data():
 
         conn.commit()
         conn.close()
+
+        # Mirror cleanup to local planning_system.db if Turso is the active DB
+        if isinstance(conn, TursoConnection) and os.path.exists(DB_PATH):
+            try:
+                l_conn = sqlite3.connect(DB_PATH)
+                l_cur = l_conn.cursor()
+                if section in ("all", "forecast"):
+                    l_cur.execute("DELETE FROM sales_forecast")
+                if section in ("all", "production"):
+                    l_cur.execute("DELETE FROM requisition_items")
+                    l_cur.execute("DELETE FROM material_requisitions")
+                    l_cur.execute("DELETE FROM production_plans")
+                if section in ("all", "store_stock", "store_all"):
+                    l_cur.execute("UPDATE materials SET current_stock = 0.0, floor_stock = 0.0, safety_stock = 0.0, in_transit = 0.0")
+                if section in ("all", "mrr", "store_all"):
+                    l_cur.execute("DELETE FROM mrr_entries")
+                if section in ("all", "wastage", "store_all"):
+                    l_cur.execute("DELETE FROM wastage_entries")
+                if section in ("all", "procurement"):
+                    l_cur.execute("DELETE FROM purchase_requisitions")
+                    l_cur.execute("UPDATE materials SET in_transit = 0.0")
+                if section in ("all", "store_txns", "store_all", "store_stock"):
+                    l_cur.execute("DELETE FROM store_transactions")
+                l_conn.commit()
+                l_conn.close()
+            except Exception as e_local:
+                print("Could not mirror cleanup to local SQLite:", e_local)
+
         invalidate_dashboard_cache()
         return jsonify({
             "success": True,

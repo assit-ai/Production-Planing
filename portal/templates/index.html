@@ -23,7 +23,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-  <link rel="stylesheet" href="/static/css/portal.css?v=20261102_v2">
+  <link rel="stylesheet" href="/static/css/portal.css?v=20261102_v3">
 </head>
 <body>
 
@@ -2572,18 +2572,18 @@
           <div class="form-group">
             <label class="form-label">Select Section to Clear / Reset:</label>
             <select class="form-control" id="clear-data-section">
-              <option value="forecast">📈 Sales Forecast Data</option>
-              <option value="production">⚙️ Production Plans & Targets</option>
+              <option value="all" selected>⚠️ ALL Operational Data (Full Wipe - Forecast, Plans, Requisitions, PO, Stock & Logs)</option>
+              <option value="forecast">📈 Sales Forecast Data Only</option>
+              <option value="production">⚙️ Production Plans & Targets Only</option>
               <option value="actual_output">🏭 Reset Actual Output to 0</option>
               <option value="production_target_only">🎯 Reset Plan Targets to 0</option>
-              <option value="requisitions">📋 Material Requisitions</option>
+              <option value="requisitions">📋 Material Requisitions Only</option>
               <option value="store_stock">📦 Store Stock (Reset Stock, Floor, Safety Stock & In-Transit to 0)</option>
-              <option value="mrr">🚚 Store MRR Inward Entries</option>
-              <option value="wastage">🗑️ Store Wastage & Scrap Logs</option>
-              <option value="store_txns">📜 Store Stock Ledger / Audit Logs</option>
+              <option value="mrr">🚚 Store MRR Inward Entries Only</option>
+              <option value="wastage">🗑️ Store Wastage & Scrap Logs Only</option>
+              <option value="store_txns">📜 Store Stock Ledger / Audit Logs Only</option>
               <option value="store_all">🏢 ALL Store Data (Stock Reset + MRR + Wastage + Txns)</option>
-              <option value="procurement">🛒 Purchase Requisitions (PO)</option>
-              <option value="all">⚠️ ALL Operational Data (Full Wipe)</option>
+              <option value="procurement">🛒 Purchase Requisitions (PO) Only</option>
             </select>
           </div>
 
@@ -2685,7 +2685,7 @@
     </div>
   </div>
 
-  <script src="/static/js/portal.js?v=20261102_v2"></script>
+  <script src="/static/js/portal.js?v=20261102_v3"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

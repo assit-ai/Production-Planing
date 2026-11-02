@@ -688,10 +688,16 @@ async function loadDashboard() {
 
     // Sidebar badges
     const critBadge = document.getElementById('badge-critical-stock');
-    if (critBadge) critBadge.textContent = stats.materials.critical;
+    if (critBadge) {
+      critBadge.textContent = stats.materials.critical;
+      critBadge.style.display = stats.materials.critical > 0 ? 'inline-block' : 'none';
+    }
 
     const prodReqBadge = document.getElementById('badge-prod-req');
-    if (prodReqBadge) prodReqBadge.textContent = stats.requisitions.pending_production;
+    if (prodReqBadge) {
+      prodReqBadge.textContent = stats.requisitions.pending_production;
+      prodReqBadge.style.display = stats.requisitions.pending_production > 0 ? 'inline-block' : 'none';
+    }
 
     const storeReqBadge = document.getElementById('store-pending-req-badge');
     if (storeReqBadge) {
@@ -701,7 +707,10 @@ async function loadDashboard() {
     }
 
     const poBadge = document.getElementById('badge-po-req');
-    if (poBadge) poBadge.textContent = stats.requisitions.pending_purchase;
+    if (poBadge) {
+      poBadge.textContent = stats.requisitions.pending_purchase;
+      poBadge.style.display = stats.requisitions.pending_purchase > 0 ? 'inline-block' : 'none';
+    }
 
     renderCriticalTable(stats.critical_items);
     renderRecentTxns(stats.recent_transactions);
@@ -896,12 +905,26 @@ function renderDashboardCharts() {
   if (ctxHealth) {
     if (AppState.charts.health) AppState.charts.health.destroy();
 
+    const hasHealthData = ((stats.materials.safe || 0) + (stats.materials.low || 0) + (stats.materials.critical || 0)) > 0;
+
     // Custom Data Labels Plugin for Doughnut Slices
     const doughnutLabelsPlugin = {
       id: 'doughnutLabelsPlugin',
       afterDatasetsDraw(chart) {
         const { ctx, data } = chart;
         ctx.save();
+
+        if (!hasHealthData) {
+          ctx.font = '600 12px Inter, system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = textColor;
+          const { width, height } = chart;
+          ctx.fillText('0 Items / Clean', width / 2, height / 2 - 6);
+          ctx.restore();
+          return;
+        }
+
         const dataset = data.datasets[0];
         const meta = chart.getDatasetMeta(0);
         if (!meta || !meta.data) { ctx.restore(); return; }
@@ -927,21 +950,29 @@ function renderDashboardCharts() {
       }
     };
 
+    const healthLabels = hasHealthData ? ['Safe Buffer', 'Low Stock', 'Critical (< Safety)'] : ['No Stock Active / All Clean'];
+    const healthDatasets = hasHealthData ? [{
+      data: [
+        stats.materials.safe || 0,
+        stats.materials.low || 0,
+        stats.materials.critical || 0
+      ],
+      backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
+      borderWidth: 2,
+      borderColor: isLight ? '#ffffff' : '#111827'
+    }] : [{
+      data: [1],
+      backgroundColor: [isLight ? '#e2e8f0' : 'rgba(255,255,255,0.08)'],
+      borderWidth: 1,
+      borderColor: isLight ? '#cbd5e1' : 'rgba(255,255,255,0.15)'
+    }];
+
     AppState.charts.health = new Chart(ctxHealth, {
       type: 'doughnut',
       plugins: [doughnutLabelsPlugin],
       data: {
-        labels: ['Safe Buffer', 'Low Stock', 'Critical (< Safety)'],
-        datasets: [{
-          data: [
-            stats.materials.safe,
-            stats.materials.low,
-            stats.materials.critical
-          ],
-          backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
-          borderWidth: 2,
-          borderColor: isLight ? '#ffffff' : '#111827'
-        }]
+        labels: healthLabels,
+        datasets: healthDatasets
       },
       options: {
         responsive: true,
@@ -3385,14 +3416,14 @@ async function submitBulkProduction() {
 }
 
 // Super Admin Data Clear Tool
-function openClearDataModal(defaultSection) {
+function openClearDataModal(defaultSection = 'all') {
   if (!isSuperAdminUser()) {
     showToast('Access Denied (নিরাপত্তা সীমাবদ্ধতা): Only Super Admin has permission to access the System Reset & Data Cleanup Tool.', 'danger');
     return;
   }
-  if (defaultSection) {
-    const secSelect = document.getElementById('clear-data-section');
-    if (secSelect) secSelect.value = defaultSection;
+  const secSelect = document.getElementById('clear-data-section');
+  if (secSelect) {
+    secSelect.value = defaultSection || 'all';
   }
   const backupToggle = document.getElementById('clear-data-backup-toggle');
   if (backupToggle) backupToggle.checked = false; // Default optional unchecked
