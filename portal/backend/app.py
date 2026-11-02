@@ -545,6 +545,8 @@ def sync_poloxy_erp():
     prod_items = {}
     fg_stock_items = {}
 
+    poloxy_error = None
+
     try:
         poloxy.login()
         poloxy_connected = True
@@ -554,6 +556,7 @@ def sync_poloxy_erp():
             try:
                 prod_items = poloxy.fetch_production_output(cat_code, date_from, date_to)
             except Exception as pe:
+                poloxy_error = str(pe)
                 print(f"[!] Warning pulling production output: {pe}")
 
         # 2. Fetch live opening stock if requested
@@ -566,6 +569,7 @@ def sync_poloxy_erp():
                 print(f"[!] Warning pulling FG stock: {se}")
 
     except Exception as e:
+        poloxy_error = str(e)
         print(f"[!] Poloxy Live Connection Warning: {e}. Falling back to existing database plans.")
 
     conn = get_db()
@@ -727,6 +731,7 @@ def sync_poloxy_erp():
         "date_mode": mode,
         "date_range": date_display,
         "poloxy_connected": poloxy_connected,
+        "poloxy_error": poloxy_error,
         "plans_updated": updated_count,
         "plans_created": created_count,
         "items_found": total_items,
@@ -3138,12 +3143,12 @@ def admin_clear_data():
             cat_params = [category] if category != "ALL" else []
             cursor.execute(f"UPDATE materials SET in_transit = 0.0 {cat_clause}", cat_params)
 
-        # 8. Store Transactions (Historical logs / Stock Ledger)
-        if section in ("all", "store_txns", "store_all"):
+        # 8. Store Transactions (Historical logs / Stock Ledger / Audit Logs)
+        if section in ("all", "store_txns", "store_all", "store_stock"):
             if range_type == "custom" and from_date and to_date:
-                cursor.execute("DELETE FROM store_transactions WHERE txn_type != 'INITIAL' AND created_at >= ? AND created_at <= ?", (from_date, to_date + " 23:59:59"))
+                cursor.execute("DELETE FROM store_transactions WHERE created_at >= ? AND created_at <= ?", (from_date, to_date + " 23:59:59"))
             else:
-                cursor.execute("DELETE FROM store_transactions WHERE txn_type != 'INITIAL'")
+                cursor.execute("DELETE FROM store_transactions")
             deleted_report["store_transactions"] = cursor.rowcount
 
         conn.commit()

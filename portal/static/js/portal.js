@@ -281,6 +281,15 @@ async function handleLoginSubmit() {
       // Always switch to dashboard on login so unauthorized views never persist
       switchView('dashboard');
 
+      // Guarantee charts redraw seamlessly once login overlay transition (300ms) completes
+      setTimeout(() => {
+        if (AppState.currentView === 'dashboard') {
+          renderDashboardCharts();
+          if (AppState.charts.perf) AppState.charts.perf.resize();
+          if (AppState.charts.health) AppState.charts.health.resize();
+        }
+      }, 350);
+
       // Check first-time login notification for password change
       if (data.user.must_change_password) {
         setTimeout(() => {
@@ -621,7 +630,16 @@ function switchView(viewName, subOptions = {}) {
 
   // Handle specific view & sub-tab parameters
   switch (viewName) {
-    case 'dashboard': loadDashboard(); break;
+    case 'dashboard': 
+      loadDashboard(); 
+      setTimeout(() => {
+        if (AppState.currentView === 'dashboard') {
+          renderDashboardCharts();
+          if (AppState.charts.perf) AppState.charts.perf.resize();
+          if (AppState.charts.health) AppState.charts.health.resize();
+        }
+      }, 150);
+      break;
     case 'forecast': loadForecastView(); break;
     case 'production': loadProductionView(); break;
     case 'store': 
@@ -768,8 +786,24 @@ function renderDashboardCharts() {
   const textColor = isLight ? '#334155' : '#9ca3af';
   const labelColor = isLight ? '#0f172a' : '#f8fafc';
 
-  // 1. BAR CHART: Forecast vs Plan vs Actual
   const ctxPerf = document.getElementById('chart-forecast-vs-prod');
+  const ctxHealth = document.getElementById('chart-stock-health');
+  if (!ctxPerf || !ctxHealth) return;
+
+  // Defensive layout check: if canvas parent container has 0 width (e.g. during login transition or section animation), retry after layout reflow
+  const parentPerf = ctxPerf.parentElement;
+  const parentHealth = ctxHealth.parentElement;
+  if (!parentPerf || parentPerf.offsetWidth === 0 || !parentHealth || parentHealth.offsetWidth === 0) {
+    if (!renderDashboardCharts._retryCount) renderDashboardCharts._retryCount = 0;
+    if (renderDashboardCharts._retryCount < 8) {
+      renderDashboardCharts._retryCount++;
+      setTimeout(renderDashboardCharts, 70);
+      return;
+    }
+  }
+  renderDashboardCharts._retryCount = 0;
+
+  // 1. BAR CHART: Forecast vs Plan vs Actual
   if (ctxPerf) {
     if (AppState.charts.perf) AppState.charts.perf.destroy();
 
@@ -781,9 +815,11 @@ function renderDashboardCharts() {
         ctx.save();
         chart.data.datasets.forEach((dataset, i) => {
           const meta = chart.getDatasetMeta(i);
+          if (!meta || !meta.data) return;
           meta.data.forEach((bar, index) => {
             const val = dataset.data[index];
             if (val === undefined || val === null) return;
+            if (!bar || isNaN(bar.x) || isNaN(bar.y)) return;
             const text = Number(val).toLocaleString() + (AppState.displayUOM ? ` ${AppState.displayUOM}` : '');
             
             ctx.font = 'bold 11px Inter, system-ui, sans-serif';
@@ -830,6 +866,7 @@ function renderDashboardCharts() {
         },
         plugins: {
           legend: { display: false },
+          datalabels: { display: false },
           tooltip: {
             callbacks: {
               label: (ctx) => ` ${ctx.dataset.label}: ${Number(ctx.raw).toLocaleString()}`
@@ -856,7 +893,6 @@ function renderDashboardCharts() {
   }
 
   // 2. DOUGHNUT CHART: Stock Health Breakdown
-  const ctxHealth = document.getElementById('chart-stock-health');
   if (ctxHealth) {
     if (AppState.charts.health) AppState.charts.health.destroy();
 
@@ -868,13 +904,16 @@ function renderDashboardCharts() {
         ctx.save();
         const dataset = data.datasets[0];
         const meta = chart.getDatasetMeta(0);
+        if (!meta || !meta.data) { ctx.restore(); return; }
         const total = dataset.data.reduce((a, b) => a + (Number(b) || 0), 0);
 
         meta.data.forEach((element, index) => {
           const val = dataset.data[index];
           if (!val || val <= 0) return;
           const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+          if (!element || typeof element.tooltipPosition !== 'function') return;
           const pos = element.tooltipPosition();
+          if (!pos || isNaN(pos.x) || isNaN(pos.y)) return;
 
           ctx.font = 'bold 12px Inter, system-ui, sans-serif';
           ctx.textAlign = 'center';
@@ -912,12 +951,21 @@ function renderDashboardCharts() {
           legend: {
             position: 'bottom',
             labels: { boxWidth: 12, font: { size: 11, weight: '600' }, color: textColor, padding: 14 }
-          }
+          },
+          datalabels: { display: false }
         }
       }
     });
   }
 }
+
+// Window resize handler to keep charts responsive
+window.addEventListener('resize', () => {
+  if (AppState.currentView === 'dashboard') {
+    if (AppState.charts.perf) AppState.charts.perf.resize();
+    if (AppState.charts.health) AppState.charts.health.resize();
+  }
+});
 
 // ----------------- 2. SALES FORECAST CONTROLLER -----------------
 async function loadForecastView() {
@@ -1684,14 +1732,14 @@ async function submitPoloxySync() {
     } else {
       if (statusMsg) {
         statusMsg.style.color = 'var(--danger)';
-        statusMsg.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${data.error || 'Failed to pull data from Poloxy ERP'}`;
+        statusMsg.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${data.error || data.poloxy_error || 'Failed to pull data from Poloxy ERP'}`;
       }
-      showToast('ERP Sync failed', 'danger');
+      showToast(data.error || 'ERP Sync failed', 'danger');
     }
   } catch (e) {
     if (statusMsg) {
       statusMsg.style.color = 'var(--danger)';
-      statusMsg.innerHTML = '<i class="fas fa-exclamation-circle"></i> Network connection error with Poloxy ERP server.';
+      statusMsg.innerHTML = `<i class="fas fa-exclamation-circle"></i> Network connection error: ${e.message || 'Cannot reach portal server'}`;
     }
     showToast('Network error during ERP sync', 'danger');
   } finally {
