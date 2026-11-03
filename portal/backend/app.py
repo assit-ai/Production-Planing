@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask import Flask, request, jsonify, send_file, render_template
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # Auto-load .env configuration
 def load_dotenv_env():
@@ -66,6 +68,18 @@ def get_db():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
+
+
+def solid_fill(hex_rgb):
+    """
+    Rock-solid standard Microsoft Excel solid cell fill generator.
+    Must use patternType='solid' with fgColor only (NO bgColor) and 8-hex ARGB (FF...).
+    When bgColor is passed, Excel Desktop can render cells transparent or unshaded.
+    """
+    clean_hex = str(hex_rgb).replace('#', '').strip().upper()
+    if len(clean_hex) == 6:
+        clean_hex = 'FF' + clean_hex
+    return PatternFill(patternType='solid', fgColor=clean_hex)
 
 
 def style_merged_range(ws, cell_range, font=None, fill=None, border=None, alignment=None):
@@ -1619,10 +1633,10 @@ def download_forecast_template():
     data_font = Font(name="Calibri", size=10)
     data_bold = Font(name="Calibri", size=10, bold=True)
     
-    title_fill = PatternFill(fill_type="solid", start_color="FF1E3A8A", end_color="FF1E3A8A")
-    header_fill = PatternFill(fill_type="solid", start_color="FF0284C7", end_color="FF0284C7")
-    zebra_fill = PatternFill(fill_type="solid", start_color="FFF8FAFC", end_color="FFF8FAFC")
-    input_fill = PatternFill(fill_type="solid", start_color="FFE0F2FE", end_color="FFE0F2FE")
+    title_fill = solid_fill("1E3A8A")
+    header_fill = solid_fill("0284C7")
+    zebra_fill = solid_fill("F8FAFC")
+    input_fill = solid_fill("E0F2FE")
     
     thin_border = Border(
         left=Side(style='thin', color='FFCBD5E1'),
@@ -2409,10 +2423,10 @@ def download_mrr_template():
     data_font = Font(name="Calibri", size=10)
     data_bold = Font(name="Calibri", size=10, bold=True)
     
-    title_fill = PatternFill(fill_type="solid", start_color="FF1E3A8A", end_color="FF1E3A8A")
-    header_fill = PatternFill(fill_type="solid", start_color="FF0284C7", end_color="FF0284C7")
-    zebra_fill = PatternFill(fill_type="solid", start_color="FFF8FAFC", end_color="FFF8FAFC")
-    input_fill = PatternFill(fill_type="solid", start_color="FFE0F2FE", end_color="FFE0F2FE")
+    title_fill = solid_fill("1E3A8A")
+    header_fill = solid_fill("0284C7")
+    zebra_fill = solid_fill("F8FAFC")
+    input_fill = solid_fill("E0F2FE")
     
     thin_border = Border(
         left=Side(style='thin', color='FFCBD5E1'),
@@ -2978,8 +2992,11 @@ def download_production_template():
     title_font = Font(name="Calibri", size=13, bold=True, color="FFFFFFFF")
     header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFFFF")
     data_font = Font(name="Calibri", size=10)
-    title_fill = PatternFill(fill_type="solid", start_color="FF1E3A8A", end_color="FF1E3A8A")
-    header_fill = PatternFill(fill_type="solid", start_color="FF0284C7", end_color="FF0284C7")
+    data_bold = Font(name="Calibri", size=10, bold=True)
+    title_fill = solid_fill("1E3A8A")
+    header_fill = solid_fill("0284C7")
+    zebra_fill = solid_fill("F8FAFC")
+    input_fill = solid_fill("E0F2FE")
     thin_border = Border(
         left=Side(style='thin', color='FFCBD5E1'),
         right=Side(style='thin', color='FFCBD5E1'),
@@ -2989,11 +3006,9 @@ def download_production_template():
     
     ws.merge_cells("A1:F1")
     ws["A1"] = f"PARAGON AGRO LIMITED - PRODUCTION PLAN IMPORT TEMPLATE ({month})"
-    ws["A1"].font = title_font
-    ws["A1"].fill = title_fill
-    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    style_merged_range(ws, "A1:F1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
     
-    headers = ["SKU Code", "Product Name", "Category", f"Plan Date ({month}-01)", "Planned Cartons", "Notes / Batch"]
+    headers = ["SKU Code", "Product Name", "Category", f"Plan Date ({month}-01)", "Planned Cartons *", "Notes / Batch"]
     for c_idx, h in enumerate(headers, 1):
         cell = ws.cell(3, c_idx, h)
         cell.font = header_font
@@ -3012,15 +3027,24 @@ def download_production_template():
     conn.close()
     
     for r_idx, s in enumerate(skus, 4):
+        c_fill = zebra_fill if (r_idx % 2 == 0) else None
         c1 = ws.cell(r_idx, 1, s["sku_code"])
+        c1.font = data_bold
         c2 = ws.cell(r_idx, 2, s["name"])
+        c2.font = data_font
         c3 = ws.cell(r_idx, 3, s["category"])
+        c3.font = data_font
         c4 = ws.cell(r_idx, 4, f"{month}-01")
+        c4.font = data_font
         c5 = ws.cell(r_idx, 5, 0)
+        c5.font = data_bold
+        c5.fill = input_fill
         c6 = ws.cell(r_idx, 6, "Monthly Plan Batch")
-        for cell in (c1, c2, c3, c4, c5, c6):
-            cell.font = data_font
+        c6.font = data_font
+        for c_i, cell in enumerate((c1, c2, c3, c4, c5, c6), 1):
             cell.border = thin_border
+            if c_i != 5 and c_fill:
+                cell.fill = c_fill
             
     for col in ws.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
@@ -3211,13 +3235,13 @@ def export_excel_report():
     data_font = Font(name="Calibri", size=10)
     data_bold = Font(name="Calibri", size=10, bold=True)
     
-    title_fill = PatternFill(fill_type="solid", start_color="FF1E3A8A", end_color="FF1E3A8A") # Navy
-    header_fill = PatternFill(fill_type="solid", start_color="FF0284C7", end_color="FF0284C7") # Cyan/Sky Blue
-    zebra_fill = PatternFill(fill_type="solid", start_color="FFF8FAFC", end_color="FFF8FAFC")
+    title_fill = solid_fill("1E3A8A") # Navy
+    header_fill = solid_fill("0284C7") # Cyan/Sky Blue
+    zebra_fill = solid_fill("F8FAFC")
     
-    fast_fill = PatternFill(fill_type="solid", start_color="FFDCFCE7", end_color="FFDCFCE7") # Light Green
-    slow_fill = PatternFill(fill_type="solid", start_color="FFFEF3C7", end_color="FFFEF3C7") # Light Amber
-    non_moving_fill = PatternFill(fill_type="solid", start_color="FFFEE2E2", end_color="FFFEE2E2") # Light Red
+    fast_fill = solid_fill("DCFCE7") # Light Green
+    slow_fill = solid_fill("FEF3C7") # Light Amber
+    non_moving_fill = solid_fill("FEE2E2") # Light Red
     
     thin_border = Border(
         left=Side(style='thin', color='FFCBD5E1'),
