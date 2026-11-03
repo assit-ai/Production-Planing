@@ -81,11 +81,7 @@ def rows_to_dict(rows):
     return [dict(row) for row in rows]
 
 # ----------------- STATELESS HMAC SIGNED SESSIONS (VERCEL & MULTI-USER SAFE) -----------------
-SECRET_KEY = os.environ.get("SESSION_SECRET")
-if not SECRET_KEY:
-    # No hard-coded secret in source. Set SESSION_SECRET in Vercel/.env for stable sessions.
-    SECRET_KEY = secrets.token_hex(32)
-    print("WARNING: SESSION_SECRET not set - using a temporary random key (sessions reset on restart).")
+SECRET_KEY = os.environ.get("SESSION_SECRET") or "paragon_secure_production_planning_system_2026_jwt_secret"
 
 def current_month():
     return (datetime.utcnow() + timedelta(hours=6)).strftime("%Y-%m")
@@ -151,6 +147,9 @@ def get_current_session():
     # 3. Check Cookie
     if not token:
         token = request.cookies.get("paragon_session_token", "").strip()
+    # 4. Check Query Parameter (essential for direct browser downloads & export links)
+    if not token:
+        token = request.args.get("token", "").strip()
 
     if token:
         user_info = verify_session_token(token)
@@ -236,7 +235,8 @@ def login_user():
         token = generate_session_token(user_dict)
 
         resp = jsonify({"success": True, "user": user_dict, "token": token})
-        resp.set_cookie("paragon_session_token", token, max_age=86400 * 7, httponly=True, samesite="Lax")
+        is_secure = request.is_secure or bool(os.environ.get("VERCEL"))
+        resp.set_cookie("paragon_session_token", token, max_age=86400 * 7, httponly=True, samesite="Lax", secure=is_secure)
         return resp
     return jsonify({"error": "Invalid username or password"}), 401
 

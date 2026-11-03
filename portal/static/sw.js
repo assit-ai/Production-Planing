@@ -1,4 +1,4 @@
-const CACHE_NAME = 'paragon-plan-v11';
+const CACHE_NAME = 'paragon-plan-v12';
 const ASSETS = [
   '/manifest.json',
   '/static/favicon.ico',

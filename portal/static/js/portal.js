@@ -26,6 +26,17 @@
   };
 })();
 
+function getAuthToken() {
+  return sessionStorage.getItem('paragon_session_token') || localStorage.getItem('paragon_session_token') || '';
+}
+
+function authDownloadUrl(rawUrl) {
+  const token = getAuthToken();
+  if (!token) return rawUrl;
+  const separator = rawUrl.includes('?') ? '&' : '?';
+  return `${rawUrl}${separator}token=${encodeURIComponent(token)}`;
+}
+
 const AppState = {
   currentUser: {
     id: 1,
@@ -136,6 +147,7 @@ async function initCurrentUser() {
   
   if (!sessionUserStr || !token) {
     if (loginOverlay) {
+      loginOverlay.style.display = 'flex';
       loginOverlay.classList.remove('hidden');
       setTimeout(() => {
         const uInp = document.getElementById('login-username');
@@ -148,7 +160,10 @@ async function initCurrentUser() {
   try {
     const user = JSON.parse(sessionUserStr);
     AppState.currentUser = user;
-    if (loginOverlay) loginOverlay.classList.add('hidden');
+    if (loginOverlay) {
+      loginOverlay.classList.add('hidden');
+      loginOverlay.style.display = 'none';
+    }
     updateUserUI();
     if (user.must_change_password) {
       setTimeout(() => {
@@ -261,12 +276,21 @@ async function handleLoginSubmit() {
     if (data.success && data.user) {
       if (data.token) {
         sessionStorage.setItem('paragon_session_token', data.token);
+        localStorage.setItem('paragon_session_token', data.token);
       }
       sessionStorage.setItem('paragon_session_user', JSON.stringify(data.user));
+      localStorage.setItem('paragon_session_user', JSON.stringify(data.user));
       AppState.currentUser = data.user;
       
       const loginOverlay = document.getElementById('login-screen-overlay');
-      if (loginOverlay) loginOverlay.classList.add('hidden');
+      if (loginOverlay) {
+        loginOverlay.classList.add('hidden');
+        setTimeout(() => {
+          if (loginOverlay.classList.contains('hidden')) {
+            loginOverlay.style.display = 'none';
+          }
+        }, 320);
+      }
       if (errBox) errBox.style.display = 'none';
 
       // Enforce category access
@@ -350,6 +374,7 @@ async function logout() {
 
   const loginOverlay = document.getElementById('login-screen-overlay');
   if (loginOverlay) {
+    loginOverlay.style.display = 'flex';
     loginOverlay.classList.remove('hidden');
     const pInp = document.getElementById('login-password');
     if (pInp) pInp.value = '';
@@ -668,7 +693,14 @@ async function loadDashboard() {
 
   try {
     const res = await fetch(`/api/dashboard/stats?category=${cat}&month=${month}&uom=${uom}`);
+    if (!res.ok) {
+      if (res.status === 401) {
+        console.warn('Session expired or unauthorized in loadDashboard');
+      }
+      return;
+    }
     const stats = await res.json();
+    if (!stats || !stats.materials) return;
     AppState.dashboardStats = stats;
 
     document.getElementById('kpi-total-items').textContent = stats.materials.total;
@@ -1321,7 +1353,7 @@ async function triggerRealignProduction() {
 function downloadForecastBlankTemplate() {
   const cat = AppState.selectedCategory;
   const month = document.getElementById('forecast-month-select')?.value || AppState.selectedMonth;
-  window.location.href = `/api/forecast/template?category=${cat}&month=${month}`;
+  window.location.href = authDownloadUrl(`/api/forecast/template?category=${cat}&month=${month}`);
   showToast('Downloading blank Excel template...', 'success');
 }
 
@@ -3124,12 +3156,12 @@ function exportActiveReportExcel() {
       if (dFrom && dTo) url += `&date_from=${dFrom}&date_to=${dTo}`;
     }
     showToast('Downloading Forecast vs Production Excel report...', 'primary');
-    window.location.href = url;
+    window.location.href = authDownloadUrl(url);
   } else {
     const cat = document.getElementById('report-stock-cat-select')?.value || AppState.selectedCategory;
     const url = `/api/reports/export/excel?section=stock_fsn&category=${cat}&month=${month}&uom=${uom}`;
     showToast('Downloading RM & PM Stock Summary Excel report...', 'primary');
-    window.location.href = url;
+    window.location.href = authDownloadUrl(url);
   }
 }
 
@@ -3351,7 +3383,7 @@ function downloadSectionExcel(specificSection) {
     }
   }
   
-  window.location.href = `/api/reports/export/excel?section=${section}&category=${cat}&month=${month}&uom=${uom}`;
+  window.location.href = authDownloadUrl(`/api/reports/export/excel?section=${section}&category=${cat}&month=${month}&uom=${uom}`);
   showToast(`Downloading Excel report for ${section.toUpperCase()} with solid cell shades...`, 'success');
 }
 
@@ -3387,7 +3419,7 @@ async function submitBulkForecast() {
 function downloadProductionTemplate() {
   const cat = AppState.selectedCategory;
   const month = AppState.selectedMonth;
-  window.location.href = `/api/production/template?category=${cat}&month=${month}`;
+  window.location.href = authDownloadUrl(`/api/production/template?category=${cat}&month=${month}`);
   showToast('Downloading blank Production Plan template...', 'success');
 }
 
@@ -4123,7 +4155,7 @@ async function submitFloorStockAudit(matId) {
 // ----------------- REQUIREMENT 7: MRR BLANK TEMPLATE & BULK UPLOAD -----------------
 function downloadMRRBlankTemplate() {
   const cat = AppState.selectedCategory;
-  window.location.href = `/api/store/mrr/template?category=${cat}`;
+  window.location.href = authDownloadUrl(`/api/store/mrr/template?category=${cat}`);
   showToast('Downloading MRR Stock Inward Blank Template with solid cell shading...', 'success');
 }
 
