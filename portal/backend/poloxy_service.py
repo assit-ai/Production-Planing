@@ -155,7 +155,7 @@ class PoloxyService:
         )
 
         try:
-            resp = self.opener.open(req, timeout=30)
+            resp = self.opener.open(req, timeout=45)
             html = resp.read().decode('utf-8', errors='ignore')
         except Exception as e:
             print(f"[!] Warning: Poloxy stock report timed out or failed: {e}")
@@ -170,6 +170,12 @@ class PoloxyService:
                 name = cells[1].strip()
                 uom = cells[2].strip() if len(cells) > 2 else 'Kg'
                 closing_stock = clean_num(cells[12])
+                
+                # Filter out blank rows, totals, or header repetitions
+                if not name and not code:
+                    continue
+                if name.lower() in ('total', 'item name', 'sub total', 'opening stock', 'closing stock'):
+                    continue
                 
                 key = code if code else name.lower()
                 items[key] = {
@@ -264,11 +270,13 @@ class PoloxyService:
         for row in reader:
             if row.get('Type', '').strip().upper() == 'OUTPUT':
                 item_name = row.get('Item', '').strip()
-                if not item_name:
+                if not item_name or item_name.lower() in ('total', 'sub total'):
                     continue
                 pri_qty = clean_num(row.get('Output Primary Unit Qty', 0))
                 sec_qty = clean_num(row.get('Output Secondary Unit Qty', 0))
                 qty = sec_qty if sec_qty > 0 else pri_qty
+                if qty <= 0:
+                    continue
 
                 key = item_name.lower().strip()
                 if key in output_items:

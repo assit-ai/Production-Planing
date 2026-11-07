@@ -85,13 +85,13 @@ function toggleWorkflowBar() {
   if (isHidden) {
     content.style.display = 'flex';
     if (icon) icon.className = 'fas fa-chevron-up';
-    if (label) label.textContent = 'হাইড করুন';
+    if (label) label.textContent = 'Hide';
     if (badge) badge.style.display = 'none';
     localStorage.setItem('workflow_bar_collapsed', 'false');
   } else {
     content.style.display = 'none';
     if (icon) icon.className = 'fas fa-chevron-down';
-    if (label) label.textContent = 'এক্সপ্যান্ড করুন';
+    if (label) label.textContent = 'Expand';
     if (badge) badge.style.display = 'inline-block';
     localStorage.setItem('workflow_bar_collapsed', 'true');
   }
@@ -107,7 +107,7 @@ function initWorkflowBarState() {
   if (isCollapsed && content) {
     content.style.display = 'none';
     if (icon) icon.className = 'fas fa-chevron-down';
-    if (label) label.textContent = 'এক্সপ্যান্ড করুন';
+    if (label) label.textContent = 'Expand';
     if (badge) badge.style.display = 'inline-block';
   }
 }
@@ -243,7 +243,7 @@ async function submitChangePassword() {
         sessionStorage.setItem('paragon_session_user', JSON.stringify(AppState.currentUser));
       }
       hideModal('modal-change-password');
-      showToast('Password changed successfully! (পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে)', 'success');
+      showToast('Password changed successfully!', 'success');
     } else {
       showError(data.error || 'Failed to update password.');
     }
@@ -493,16 +493,20 @@ function applyRolePermissions() {
   const createPlanBtn = document.querySelector('[onclick="openCreatePlanModal()"]');
   const bulkProdBtn = document.querySelector('[onclick="openBulkProductionModal()"]');
   const poloxyBtn = document.querySelector('[onclick="openPoloxySyncModal()"]') || document.querySelector('[onclick="syncFromPoloxyERP()"]');
+  const saveProdBtn = document.getElementById('btn-save-production-plans');
   if (createPlanBtn) createPlanBtn.style.display = canEditProduction ? '' : 'none';
   if (bulkProdBtn) bulkProdBtn.style.display = canEditProduction ? '' : 'none';
   if (poloxyBtn) poloxyBtn.style.display = canEditProduction ? '' : 'none';
+  if (saveProdBtn) saveProdBtn.style.display = canEditProduction ? '' : 'none';
 
   // 3. Store Section Edit Buttons
   const canEditStore = canUserEdit('store');
   const mrrBtn = document.querySelector('[onclick="openCreateMRRModal()"]');
   const replenishBtn = document.querySelector('[onclick="triggerAutoReplenishment()"]');
+  const saveStoreBtn = document.getElementById('btn-save-store-stock');
   if (mrrBtn) mrrBtn.style.display = canEditStore ? '' : 'none';
   if (replenishBtn) replenishBtn.style.display = canEditStore ? '' : 'none';
+  if (saveStoreBtn) saveStoreBtn.style.display = canEditStore ? '' : 'none';
 
   // 4. Wastage Section
   const wastageBtn = document.querySelector('[onclick="openCreateWastageModal()"]');
@@ -712,8 +716,8 @@ async function loadDashboard() {
     document.getElementById('kpi-pending-prod-req').textContent = stats.requisitions.pending_production;
     document.getElementById('kpi-pending-po').textContent = `${stats.requisitions.pending_purchase} POs in Procurement`;
 
-    document.getElementById('kpi-inventory-val').textContent = `৳ ${stats.valuation.total.toLocaleString()}`;
-    document.getElementById('kpi-rm-pm-val').textContent = `RM: ৳${stats.valuation.rm.toLocaleString()} | PM: ৳${stats.valuation.pm.toLocaleString()}`;
+    document.getElementById('kpi-inventory-val').textContent = `BDT ${stats.valuation.total.toLocaleString()}`;
+    document.getElementById('kpi-rm-pm-val').textContent = `RM: BDT ${stats.valuation.rm.toLocaleString()} | PM: BDT ${stats.valuation.pm.toLocaleString()}`;
 
     document.getElementById('kpi-achievement').textContent = `${stats.performance.achievement_pct}%`;
     document.getElementById('kpi-actual-produced').textContent = `${stats.performance.actual.toLocaleString()} / ${stats.performance.planned.toLocaleString()} ${uom}s`;
@@ -1233,7 +1237,7 @@ async function saveForecastChanges() {
 
   let revisionNotes = 'Monthly Sales Forecast Update';
   if (hasChanges) {
-    const userReason = prompt('Sales forecast values have been adjusted. Please enter revision reason or specific period note (যেমনঃ Week 3 Promotion, Ramadan surge):', 'Periodic Demand Adjustment');
+    const userReason = prompt('Sales forecast values have been adjusted. Please enter revision reason or specific period note (e.g. Week 3 Promotion, Ramadan surge):', 'Periodic Demand Adjustment');
     if (userReason !== null && userReason.trim() !== '') {
       revisionNotes = userReason.trim();
     }
@@ -1285,7 +1289,7 @@ async function openForecastRevisionsModal(skuId, skuName) {
   const titleEl = document.getElementById('modal-revision-sku-title');
   const subEl = document.getElementById('modal-revision-sku-sub');
   if (titleEl) titleEl.textContent = `${skuName} - Forecast Revision History`;
-  if (subEl) subEl.textContent = `Full audit log of all weekly/monthly adjustments made for ${month} (SKU #${skuId}).`;
+  if (subEl) subEl.textContent = `Role: ${data.role} • ${data.urgent > 0 ? data.urgent + ' tasks pending' : 'All tasks completed ✅'}`;
 
   const tbody = document.getElementById('modal-forecast-revisions-tbody');
   if (tbody) {
@@ -1512,10 +1516,20 @@ function renderProductionPlans(plans) {
             ${p.plan_date ? `Closing: ${prevDateLabel} / Open: ${planDateLabel}` : (p.godown_name ? p.godown_name.split(' ')[1] || p.godown_name : 'Poloxy In-Hand')}
           </div>
         </td>
-        <td><strong>${plannedVal.toLocaleString()}</strong> ${uomLabel}</td>
+        <td>
+          ${canUserEdit('production') ? `
+            <div style="display:flex; align-items:center; gap:4px;">
+              <input type="number" step="any" min="0" class="form-control form-control-sm plan-target-input" 
+                     data-plan-id="${p.id}" data-sku-id="${p.sku_id}" data-plan-date="${p.plan_date || ''}" data-ctn-size="${p.ctn_size || 1}"
+                     value="${plannedVal}" style="width:85px; text-align:right; font-weight:700; padding:2px 6px;"
+                     oninput="markProductionPlanDirty(this)">
+              <span style="font-size:0.75rem; color:var(--text-muted);">${uomLabel}</span>
+            </div>
+          ` : `<strong>${plannedVal.toLocaleString()}</strong> ${uomLabel}`}
+        </td>
         <td>
           <div style="font-weight:700; color:${ach >= 80 ? 'var(--success)' : 'var(--warning)'}; font-size:0.95rem;">${actualVal.toLocaleString()} ${uomLabel}</div>
-          ${p.output_amount ? `<div style="font-size:0.68rem; color:var(--success); font-weight:600;">৳ ${p.output_amount.toLocaleString()}</div>` : ''}
+          ${p.output_amount ? `<div style="font-size:0.68rem; color:var(--success); font-weight:600;">BDT ${p.output_amount.toLocaleString()}</div>` : ''}
         </td>
         <td>
           <span style="font-weight:600; color:${p.variance_ctn >= 0 ? 'var(--success)' : 'var(--danger)'};">
@@ -1544,7 +1558,7 @@ function renderProductionPlans(plans) {
               <button class="btn btn-sm btn-outline" title="Manual correction (Super Admin only)" onclick="openUpdateOutputModal(${p.id}, '${p.plan_no}', ${p.planned_ctn}, ${p.actual_produced_ctn})">
                 <i class="fas fa-edit"></i> Output
               </button>
-            ` : `<span class="pill pill-safe" style="font-size:0.7rem;" title="Actual output Poloxy report থেকে আসে"><i class="fas fa-link"></i> Poloxy</span>`}
+            ` : `<span class="pill pill-safe" style="font-size:0.7rem;" title="Actual output Pulled from Poloxy ERP report"><i class="fas fa-link"></i> Poloxy</span>`}
           </div>
         </td>
       </tr>
@@ -1605,7 +1619,7 @@ function openPoloxySyncModal() {
   const btn = document.getElementById('btn-submit-erp-sync');
   if (btn) {
     btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> <span>Poloxy ERP থেকে ডাটা আনুন (Pull Data Now)</span>';
+    btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> <span>Pull Poloxy ERP Data Now</span>';
   }
 
   showModal('modal-poloxy-sync');
@@ -1627,8 +1641,8 @@ function updateRule9DateHelper() {
     const yestStr = yest.toISOString().split('T')[0];
 
     let prefix = '';
-    if (sDate.value === todayStr) prefix = 'আজকের ';
-    else if (sDate.value === yestStr) prefix = 'গতকালকের ';
+    if (sDate.value === todayStr) prefix = "Today's ";
+    else if (sDate.value === yestStr) prefix = "Yesterday's ";
 
     if (friendlyLabel) {
       friendlyLabel.textContent = `${prefix}(${formatted} / ${fmtEn})`;
@@ -1665,8 +1679,8 @@ function setSyncDateMode(mode) {
 
   if (toggleBtn) {
     toggleBtn.innerHTML = (mode === 'single') 
-      ? '🗓️ একাধিক দিন (Date Range)' 
-      : '📅 একক দিন (Single Date)';
+      ? '🗓️ Date Range' 
+      : '📅 Single Date';
   }
 
   if (boxSingle) boxSingle.style.display = (mode === 'single') ? 'block' : 'none';
@@ -1924,10 +1938,10 @@ async function syncMaterialsFromPoloxy() {
   if (btn) {
     originalHtml = btn.innerHTML;
     btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Poloxy লাইভ স্টক সিঙ্ক হচ্ছে... (~১৫ সেকেন্ড)</span>';
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Syncing Poloxy Live Stock... (~15s)</span>';
   }
 
-  showToast(`Poloxy ERP থেকে Unit ${cat}-এর Factory Godown (RAW & PACKAGING MATERIAL) লাইভ স্টক সিঙ্ক শুরু হয়েছে... দয়া করে অপেক্ষা করুন।`, 'info');
+  showToast(`Connecting to Poloxy ERP to sync live RM & PM stock for Unit ${cat}... Please wait.`, 'info');
   
   try {
     const res = await fetch('/api/materials/sync-poloxy', {
@@ -1937,7 +1951,7 @@ async function syncMaterialsFromPoloxy() {
     });
     const data = await res.json();
     if (data.success) {
-      showToast(`✅ Poloxy ERP থেকে ${data.updated_count} টি RM ও PM আইটেমের স্টক সফলভাবে সিঙ্ক হয়েছে!`, 'success');
+      showToast(`✅ Successfully synced ${data.updated_count} RM and PM materials with live Poloxy ERP closing stock!`, 'success');
       loadStoreStock();
       loadMaterials();
       if (AppState.storeSubTab === 'ledger') loadStockLedger();
@@ -1945,7 +1959,7 @@ async function syncMaterialsFromPoloxy() {
       showToast(`Poloxy Sync Error: ${data.error || 'Failed to sync'}`, 'danger');
     }
   } catch (e) {
-    showToast('Poloxy ERP সার্ভারের সাথে সংযোগে ত্রুটি দেখা দিয়েছে (Timeout/Network)', 'danger');
+    showToast('Error connecting to Poloxy ERP server (Timeout/Network)', 'danger');
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -2071,10 +2085,23 @@ function renderStoreTable(items) {
           </span>
         </td>
         <td>
-          <a href="javascript:void(0)" class="aging-stock-link" onclick="openMaterialAgingModal(${m.id})" style="font-weight:700; color:${m.stock_status === 'Critical' ? 'var(--danger)' : 'var(--primary)'}; font-size:0.95rem; text-decoration:underline; cursor:pointer;" title="Click to view Batch Receiving Dates & Shelf-Life Aging Breakdown">
-            ${m.current_stock.toLocaleString()}
-          </a> ${m.unit}
-          <div style="font-size:0.68rem; color:var(--text-dim);"><i class="fas fa-history"></i> Click for Aging</div>
+          ${canUserEdit('store') ? `
+            <div style="display:flex; align-items:center; gap:4px;">
+              <input type="number" step="any" min="0" class="form-control form-control-sm store-stock-input"
+                     data-mat-id="${m.id}" data-orig-val="${m.current_stock}"
+                     value="${m.current_stock}" style="width:85px; text-align:right; font-weight:700; padding:2px 6px;"
+                     oninput="markStoreStockDirty(this)">
+              <span style="font-size:0.75rem; color:var(--text-muted);">${m.unit}</span>
+            </div>
+            <a href="javascript:void(0)" class="aging-stock-link" onclick="openMaterialAgingModal(${m.id})" style="font-size:0.68rem; color:var(--text-dim); text-decoration:underline;">
+              <i class="fas fa-history"></i> Aging
+            </a>
+          ` : `
+            <a href="javascript:void(0)" class="aging-stock-link" onclick="openMaterialAgingModal(${m.id})" style="font-weight:700; color:${m.stock_status === 'Critical' ? 'var(--danger)' : 'var(--primary)'}; font-size:0.95rem; text-decoration:underline;" title="Click to view Batch Receiving Dates & Shelf-Life Aging Breakdown">
+              ${m.current_stock.toLocaleString()}
+            </a> ${m.unit}
+            <div style="font-size:0.68rem; color:var(--text-dim);"><i class="fas fa-history"></i> Click for Aging</div>
+          `}
         </td>
         <td>
           <span style="font-weight:600; color:var(--cyan); font-size:0.92rem;">${floorStock.toLocaleString()}</span> ${m.unit}
@@ -2083,12 +2110,15 @@ function renderStoreTable(items) {
           <strong style="color:var(--text-main); font-size:0.95rem;">${totalPlant.toLocaleString()}</strong> ${m.unit}
         </td>
         <td>
-          <span style="font-weight:600;">${m.safety_stock.toLocaleString()}</span> ${m.unit}
           ${canUserEdit('store') ? `
-            <button class="btn btn-sm btn-outline" style="padding:1px 5px; font-size:0.65rem; margin-left:4px;" title="Edit Safety Stock" onclick="openEditSafetyStockModal(${m.id}, '${m.name.replace(/'/g, "\\'")}', ${m.safety_stock})">
-              <i class="fas fa-pen"></i>
-            </button>
-          ` : ''}
+            <div style="display:flex; align-items:center; gap:4px;">
+              <input type="number" step="any" min="0" class="form-control form-control-sm store-safety-input"
+                     data-mat-id="${m.id}" data-orig-val="${m.safety_stock}"
+                     value="${m.safety_stock}" style="width:75px; text-align:right; font-weight:600; padding:2px 6px;"
+                     oninput="markStoreStockDirty(this)">
+              <span style="font-size:0.75rem; color:var(--text-muted);">${m.unit}</span>
+            </div>
+          ` : `<span style="font-weight:600;">${m.safety_stock.toLocaleString()}</span> ${m.unit}`}
         </td>
         <td>
           ${m.in_transit > 0 
@@ -2096,7 +2126,7 @@ function renderStoreTable(items) {
             : `<span style="color:var(--text-dim);">-</span>`}
         </td>
         <td><span class="pill ${pillClass}">${m.stock_status}</span></td>
-        <td><strong>৳ ${m.stock_value.toLocaleString()}</strong></td>
+        <td><strong>BDT ${m.stock_value.toLocaleString()}</strong></td>
         <td>
           <div style="display:flex; gap:0.35rem;">
             ${canUserEdit('store') ? `
@@ -2192,8 +2222,8 @@ async function loadMRREntries() {
         </td>
         <td><strong>${r.material_name}</strong> <span style="font-size:0.7rem; color:var(--text-dim);">(${r.item_code})</span></td>
         <td><strong>${r.received_qty.toLocaleString()}</strong> ${r.unit}</td>
-        <td>৳ ${r.unit_price}</td>
-        <td><strong>৳ ${r.total_amount.toLocaleString()}</strong></td>
+        <td>BDT ${r.unit_price}</td>
+        <td><strong>BDT ${r.total_amount.toLocaleString()}</strong></td>
         <td><span style="font-size:0.75rem; color:var(--text-dim);">${r.created_by}</span></td>
       </tr>
     `).join('');
@@ -2273,7 +2303,7 @@ async function loadWastageEntries() {
         <td><span class="pill ${w.item_type === 'FG' ? 'pill-safe' : 'pill-fast'}">${w.item_type}</span></td>
         <td><strong>${w.qty.toLocaleString()}</strong> ${w.unit}</td>
         <td><span class="pill pill-critical">${w.reason}</span></td>
-        <td><strong>৳ ${w.estimated_cost.toLocaleString()}</strong></td>
+        <td><strong>BDT ${w.estimated_cost.toLocaleString()}</strong></td>
         <td>${w.remarks || '-'}</td>
       </tr>
     `).join('');
@@ -2427,7 +2457,7 @@ async function loadAdminMaterials() {
         <td><span class="pill ${m.type === 'RM' ? 'pill-safe' : 'pill-fast'}">${m.type}</span></td>
         <td>Unit ${m.category_code}</td>
         <td>${m.unit}</td>
-        <td>৳ ${m.unit_price}</td>
+        <td>BDT ${m.unit_price}</td>
         <td>${m.safety_stock.toLocaleString()}</td>
         <td>${m.supplier_name || '-'}</td>
         <td>
@@ -2574,12 +2604,12 @@ async function submitEditUser() {
 
 async function deleteUser(id) {
   if (!confirm('Are you sure you want to delete this user?')) return;
-  showDeleteAnimation('ইউজার প্রোফাইল মোছা হচ্ছে...', 'ইউজার ডাটাবেস থেকে নিরাপদভাবে মুছে ফেলা হচ্ছে...');
+  showDeleteAnimation('Deleting user profile...', 'Removing user securely from database...');
   try {
     const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
     const data = await res.json();
     if (data.success) {
-      finishDeleteAnimation('ইউজার সফলভাবে মুছে ফেলা হয়েছে।', () => {
+      finishDeleteAnimation('User successfully deleted.', () => {
         showToast('User deleted successfully', 'success');
         loadAdminUsers();
       });
@@ -2844,8 +2874,8 @@ async function loadSKUBOMDetails(skuId, skuName) {
               <th>Type</th>
               <th>Rate / Carton</th>
               <th>Unit</th>
-              <th>Unit Price (৳)</th>
-              <th>Est. Cost / Ctn (৳)</th>
+              <th>Unit Price (BDT)</th>
+              <th>Est. Cost / Ctn (BDT)</th>
               <th>Notes / Formulation</th>
               <th>Actions</th>
             </tr>
@@ -2860,8 +2890,8 @@ async function loadSKUBOMDetails(skuId, skuName) {
                          onchange="updateBOMItemRate(${skuId}, ${it.material_id}, this.value, '${it.bom_unit}')">
                 </td>
                 <td>${it.bom_unit}</td>
-                <td>৳ ${it.unit_price}</td>
-                <td><strong>৳ ${(it.rate_per_ctn * it.unit_price).toFixed(2)}</strong></td>
+                <td>BDT ${it.unit_price}</td>
+                <td><strong>BDT ${(it.rate_per_ctn * it.unit_price).toFixed(2)}</strong></td>
                 <td><span style="font-size:0.75rem; color:var(--text-muted);">${it.notes || '-'}</span></td>
                 <td>
                   <button class="btn btn-sm btn-danger" onclick="deleteBOMItem(${skuId}, ${it.material_id})">
@@ -2991,8 +3021,8 @@ function renderProcurementTable(pos) {
         </td>
         <td><span class="pill ${p.type === 'RM' ? 'pill-safe' : 'pill-fast'}">${p.type}</span></td>
         <td><strong>${p.req_qty.toLocaleString()}</strong> ${p.unit}</td>
-        <td>৳ ${p.unit_price}</td>
-        <td><strong>৳ ${p.total_value.toLocaleString()}</strong></td>
+        <td>BDT ${p.unit_price}</td>
+        <td><strong>BDT ${p.total_value.toLocaleString()}</strong></td>
         <td><span class="pill ${statusClass}">${p.status}</span></td>
         <td>${p.expected_delivery || `${p.lead_time_days} days`}</td>
         <td>
@@ -3350,15 +3380,15 @@ async function loadStockSummaryReport() {
               ? `<span class="pill pill-critical">-${m.deficit_qty}</span>` 
               : `<span class="pill pill-safe">Buffer OK</span>`}
           </td>
-          <td>৳ ${m.unit_price}</td>
-          <td><strong>৳ ${m.stock_value.toLocaleString()}</strong></td>
+          <td>BDT ${m.unit_price}</td>
+          <td><strong>BDT ${m.stock_value.toLocaleString()}</strong></td>
           <td><span class="pill ${fsnClass}">${m.fsn_status}</span></td>
         </tr>
       `;
     }).join('');
 
     const valEl = document.getElementById('report-kpi-total-val');
-    if (valEl) valEl.textContent = `Total Valuation: ৳${Math.round(totalVal).toLocaleString()}`;
+    if (valEl) valEl.textContent = `Total Valuation: BDT ${Math.round(totalVal).toLocaleString()}`;
     const critEl = document.getElementById('report-kpi-critical-count');
     if (critEl) critEl.textContent = `Critical: ${criticalCount} Items`;
     const countBadge = document.getElementById('report-stock-count-badge');
@@ -3410,7 +3440,7 @@ async function submitBulkForecast() {
   formData.append('month', month);
   runUploadWithPreview({
     url: '/api/forecast/bulk-upload', formData, sourceModal: 'modal-bulk-forecast',
-    cols: [['code', 'SKU Code'], ['name', 'SKU'], ['old', 'আগের (ctn)'], ['new', 'নতুন (ctn)']],
+    cols: [['code', 'SKU Code'], ['name', 'SKU'], ['old', 'Previous (ctn)'], ['new', 'New (ctn)']],
     onSuccess: () => { loadForecastView(); loadDashboard(); }
   });
 }
@@ -3450,7 +3480,7 @@ async function submitBulkProduction() {
 // Super Admin Data Clear Tool
 function openClearDataModal(defaultSection = 'all') {
   if (!isSuperAdminUser()) {
-    showToast('Access Denied (নিরাপত্তা সীমাবদ্ধতা): Only Super Admin has permission to access the System Reset & Data Cleanup Tool.', 'danger');
+    showToast('Access Denied: Only Super Admin has permission to access the System Reset & Data Cleanup Tool.', 'danger');
     return;
   }
   const secSelect = document.getElementById('clear-data-section');
@@ -3464,7 +3494,7 @@ function openClearDataModal(defaultSection = 'all') {
 
 async function submitClearData() {
   if (!isSuperAdminUser()) {
-    showToast('Access Denied (নিরাপত্তা সীমাবদ্ধতা): Only Super Admin can perform data cleanup operations.', 'danger');
+    showToast('Access Denied: Only Super Admin can perform data cleanup operations.', 'danger');
     return;
   }
   const section = document.getElementById('clear-data-section').value;
@@ -4097,7 +4127,7 @@ async function openFloorStockModal() {
       <div style="background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:8px; padding:0.75rem 1rem; margin-bottom:1rem; font-size:0.82rem; display:flex; justify-content:space-between; align-items:center;">
         <div>
           <i class="fas fa-info-circle" style="color:var(--cyan);"></i>
-          <strong>Floor Stock (WIP):</strong> Production ফ্লোরে অবস্থিত আনইউজড কাঁচামাল ও প্যাকেজিং ম্যাটেরিয়ালের শিফট অনুযায়ী ফিজিক্যাল কাউন্ট আপডেট করুন।
+          <strong>Floor Stock (WIP):</strong> Update physical count of raw materials and packaging on the shop floor per shift.
         </div>
         <span class="pill pill-safe">Unit ${cat}</span>
       </div>
@@ -4334,7 +4364,7 @@ document.addEventListener('click', (e) => {
 // ----------------- SUPER ADMIN EXCLUSIVE: FORECAST BOM MODAL -----------------
 async function openForecastBOMModal(skuId, skuName) {
   if (!isSuperAdminUser()) {
-    showToast('Access Denied (নিরাপত্তা সীমাবদ্ধতা): Only Super Admin has permission to view or edit Bill of Materials (BOM) specifications.', 'danger');
+    showToast('Access Denied: Only Super Admin has permission to view or edit Bill of Materials (BOM) specifications.', 'danger');
     return;
   }
 
@@ -4425,8 +4455,8 @@ async function openForecastBOMModal(skuId, skuName) {
                     <td style="padding:0.4rem 0.6rem; text-align:right;">
                       ${formattedStock} ${it.material_unit}
                     </td>
-                    <td style="padding:0.4rem 0.6rem; text-align:right;">৳ ${(it.unit_price || 0).toFixed(2)}</td>
-                    <td style="padding:0.4rem 0.6rem; text-align:right; font-weight:600;">৳ ${itemCost.toFixed(2)}</td>
+                    <td style="padding:0.4rem 0.6rem; text-align:right;">BDT ${(it.unit_price || 0).toFixed(2)}</td>
+                    <td style="padding:0.4rem 0.6rem; text-align:right; font-weight:600;">BDT ${itemCost.toFixed(2)}</td>
                   </tr>
                 `;
               }).join('')}
@@ -4447,15 +4477,15 @@ async function openForecastBOMModal(skuId, skuName) {
           <div style="display:flex; gap:1rem; text-align:right;">
             <div>
               <div style="font-size:0.7rem; color:var(--text-muted);">RM Cost/Ctn</div>
-              <div style="font-size:0.9rem; font-weight:700; color:var(--success);">৳ ${rmCost.toFixed(2)}</div>
+              <div style="font-size:0.9rem; font-weight:700; color:var(--success);">BDT ${rmCost.toFixed(2)}</div>
             </div>
             <div>
               <div style="font-size:0.7rem; color:var(--text-muted);">PM Cost/Ctn</div>
-              <div style="font-size:0.9rem; font-weight:700; color:var(--warning);">৳ ${pmCost.toFixed(2)}</div>
+              <div style="font-size:0.9rem; font-weight:700; color:var(--warning);">BDT ${pmCost.toFixed(2)}</div>
             </div>
             <div style="border-left:1px solid var(--border-color); padding-left:1rem;">
               <div style="font-size:0.7rem; color:var(--text-muted);">Total Material / Ctn</div>
-              <div style="font-size:0.98rem; font-weight:800; color:var(--primary);">৳ ${totalCost.toFixed(2)}</div>
+              <div style="font-size:0.98rem; font-weight:800; color:var(--primary);">BDT ${totalCost.toFixed(2)}</div>
             </div>
           </div>
         </div>
@@ -4467,7 +4497,7 @@ async function openForecastBOMModal(skuId, skuName) {
             <span>Raw Materials (RM Formulation)</span>
             <span class="badge" style="background:var(--success); color:#fff; font-size:0.68rem; padding:1px 5px; border-radius:3px;">${rmItems.length} items</span>
           </h4>
-          <span style="font-size:0.78rem; font-weight:700; color:var(--success);">Subtotal: ৳ ${rmCost.toFixed(2)} / ctn</span>
+          <span style="font-size:0.78rem; font-weight:700; color:var(--success);">Subtotal: BDT ${rmCost.toFixed(2)} / ctn</span>
         </div>
         ${renderTable(rmItems, 'Raw Materials')}
 
@@ -4478,7 +4508,7 @@ async function openForecastBOMModal(skuId, skuName) {
             <span>Packaging Materials (PM Formulation)</span>
             <span class="badge" style="background:var(--warning); color:#fff; font-size:0.68rem; padding:1px 5px; border-radius:3px;">${pmItems.length} items</span>
           </h4>
-          <span style="font-size:0.78rem; font-weight:700; color:var(--warning);">Subtotal: ৳ ${pmCost.toFixed(2)} / ctn</span>
+          <span style="font-size:0.78rem; font-weight:700; color:var(--warning);">Subtotal: BDT ${pmCost.toFixed(2)} / ctn</span>
         </div>
         ${renderTable(pmItems, 'Packaging Materials')}
       `;
@@ -4588,7 +4618,7 @@ async function loadMyTasks() {
 function renderMyTasks(box, data) {
   if (!box || !data) return;
   const levelColor = { danger: 'var(--danger)', warning: 'var(--warning)', info: 'var(--primary)', success: 'var(--success)' };
-  const groupLabel = { 'Sales': 'Sales (সেলস)', 'Production': 'Production (প্রোডাকশন)', 'Store': 'Store (স্টোর)', 'Supply Chain': 'Supply Chain (সাপ্লাই চেইন)' };
+  const groupLabel = { 'Sales': 'Sales', 'Production': 'Production', 'Store': 'Store', 'Supply Chain': 'Supply Chain' };
   const groupIcon = { 'Sales': 'fa-chart-line', 'Production': 'fa-industry', 'Store': 'fa-boxes', 'Supply Chain': 'fa-truck-loading' };
   const multi = data.groups && data.groups.length > 1;
 
@@ -4618,13 +4648,13 @@ function renderMyTasks(box, data) {
           <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
             <div class="mt-main-heading">
               <i class="fas fa-bolt" style="color:var(--warning);"></i> 
-              <span>আজকের অ্যাকশন সেন্টার (Action Center)</span>
+              <span>Action Center</span>
             </div>
-            ${urgentCount > 0 ? `<span class="mt-urgent-badge">${urgentCount} টি কাজ অপেক্ষায়</span>` : '<span class="pill pill-safe">কোনো কাজ বাকি নেই ✅</span>'}
+            ${urgentCount > 0 ? `<span class="mt-urgent-badge">${urgentCount}  tasks pending</span>` : '<span class="pill pill-safe">All caught up ✅</span>'}
             ${multi ? `<div style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; margin-left:0.5rem;">${groupBadges}</div>` : ''}
           </div>
           <button type="button" class="btn btn-sm btn-outline" style="padding:2px 10px; font-size:0.75rem; font-weight:700; border-radius:6px; color:var(--primary); pointer-events:none;">
-            কাজগুলো দেখুন <i class="fas fa-chevron-down" style="margin-left:4px;"></i>
+            View tasks <i class="fas fa-chevron-down" style="margin-left:4px;"></i>
           </button>
         </div>
       </div>
@@ -4633,7 +4663,7 @@ function renderMyTasks(box, data) {
   }
 
   // Expanded View
-  const headline = urgentCount > 0 ? `আপনার <b>${urgentCount}</b> টি কাজ অপেক্ষায় আছে` : 'আজ কোনো জরুরি কাজ বাকি নেই ✅';
+  const headline = urgentCount > 0 ? `You have <b>${urgentCount}</b> pending tasks` : 'No pending tasks today ✅';
 
   // Filter tabs for multi-group users
   let tabsHtml = '';
@@ -4641,7 +4671,7 @@ function renderMyTasks(box, data) {
     tabsHtml = `
       <div class="mt-dept-tabs">
         <button type="button" class="mt-tab-pill ${curFilter === 'all' ? 'active' : ''}" onclick="setMyTasksFilter('all')">
-          <i class="fas fa-th-large"></i> সব কাজ (${data.tasks.length})
+          <i class="fas fa-th-large"></i> All Tasks (${data.tasks.length})
         </button>
         ${data.groups.map(g => `
           <button type="button" class="mt-tab-pill ${curFilter === g ? 'active' : ''}" onclick="setMyTasksFilter('${g}')">
@@ -4685,22 +4715,22 @@ function renderMyTasks(box, data) {
         <div class="mt-title-area" onclick="toggleMyTasks()">
           <div class="mt-main-heading">
             <i class="fas fa-bolt" style="color:var(--warning);"></i> 
-            <span>আজকের অ্যাকশন সেন্টার (Action Center)</span>
+            <span>Action Center</span>
           </div>
           <span class="mt-role-badge">${escHtml(data.role)}</span>
-          ${urgentCount > 0 ? `<span class="mt-urgent-badge">${urgentCount} টি পেন্ডিং</span>` : '<span class="pill pill-safe">ক্লিয়ার</span>'}
+          ${urgentCount > 0 ? `<span class="mt-urgent-badge">${urgentCount}  Pending</span>` : '<span class="pill pill-safe">Clear</span>'}
           <span style="font-size:0.78rem; color:var(--text-muted); margin-left:4px;">${headline} · ${escHtml(data.today)}</span>
         </div>
         <div class="mt-controls-area">
-          <button class="btn btn-sm btn-outline" onclick="loadMyTasks()" title="রিফ্রেশ"><i class="fas fa-sync-alt"></i></button>
-          <button class="btn btn-sm btn-outline" onclick="toggleMyTasks()" style="font-size:0.75rem; font-weight:700; color:var(--text-dim);" title="হাইড করুন">
-            হাইড করুন <i class="fas fa-chevron-up" style="margin-left:3px;"></i>
+          <button class="btn btn-sm btn-outline" onclick="loadMyTasks()" title="Refresh"><i class="fas fa-sync-alt"></i></button>
+          <button class="btn btn-sm btn-outline" onclick="toggleMyTasks()" style="font-size:0.75rem; font-weight:700; color:var(--text-dim);" title="Hide">
+            Hide <i class="fas fa-chevron-up" style="margin-left:3px;"></i>
           </button>
         </div>
       </div>
       ${tabsHtml}
       <div class="mt-cards-grid">
-        ${filteredTasks.length > 0 ? filteredTasks.map(renderTaskCard).join('') : '<div style="color:var(--text-dim); padding:1.5rem; text-align:center; grid-column:1/-1;">এই ক্যাটাগরিতে কোনো পেন্ডিং কাজ নেই।</div>'}
+        ${filteredTasks.length > 0 ? filteredTasks.map(renderTaskCard).join('') : '<div style="color:var(--text-dim); padding:1.5rem; text-align:center; grid-column:1/-1;">No pending tasks in this category.</div>'}
       </div>
     </div>
   `;
@@ -4755,7 +4785,7 @@ function closeActionDrawer() {
 function renderDrawerTasks(data) {
   if (!data) return;
   const levelColor = { danger: 'var(--danger)', warning: 'var(--warning)', info: 'var(--primary)', success: 'var(--success)' };
-  const groupLabel = { 'Sales': 'Sales (সেলস)', 'Production': 'Production (প্রোডাকশন)', 'Store': 'Store (স্টোর)', 'Supply Chain': 'Supply Chain (সাপ্লাই চেইন)' };
+  const groupLabel = { 'Sales': 'Sales', 'Production': 'Production', 'Store': 'Store', 'Supply Chain': 'Supply Chain' };
   const groupIcon = { 'Sales': 'fa-chart-line', 'Production': 'fa-industry', 'Store': 'fa-boxes', 'Supply Chain': 'fa-truck-loading' };
   const multi = data.groups && data.groups.length > 1;
   const curFilter = AppState.myTasksFilter || 'all';
@@ -4763,7 +4793,7 @@ function renderDrawerTasks(data) {
   // Subtitle
   const subEl = document.getElementById('drawer-user-info');
   if (subEl) {
-    subEl.textContent = `রোল: ${data.role} • ${data.urgent > 0 ? data.urgent + ' টি কাজ অপেক্ষায়' : 'সব কাজ সম্পন্ন ✅'}`;
+    subEl.textContent = `Role: ${data.role} • ${data.urgent > 0 ? data.urgent + ' tasks pending' : 'All tasks completed ✅'}`;
   }
   const countEl = document.getElementById('drawer-total-count');
   if (countEl) {
@@ -4777,7 +4807,7 @@ function renderDrawerTasks(data) {
       filterBox.style.display = 'flex';
       filterBox.innerHTML = `
         <button type="button" class="mt-tab-pill ${curFilter === 'all' ? 'active' : ''}" onclick="setMyTasksFilter('all')">
-          সব (${data.tasks.length})
+          All (${data.tasks.length})
         </button>
         ${data.groups.map(g => `
           <button type="button" class="mt-tab-pill ${curFilter === g ? 'active' : ''}" onclick="setMyTasksFilter('${g}')">
@@ -4799,7 +4829,7 @@ function renderDrawerTasks(data) {
     : (data.tasks || []).filter(t => t.group === curFilter);
 
   if (filteredTasks.length === 0) {
-    listBox.innerHTML = '<div style="color:var(--text-dim); text-align:center; padding:3rem 1rem;"><i class="fas fa-check-circle fa-2x" style="color:var(--success); margin-bottom:0.5rem;"></i><br>আজ কোনো পেন্ডিং কাজ নেই।</div>';
+    listBox.innerHTML = '<div style="color:var(--text-dim); text-align:center; padding:3rem 1rem;"><i class="fas fa-check-circle fa-2x" style="color:var(--success); margin-bottom:0.5rem;"></i><br>No pending tasks today.</div>';
     return;
   }
 
@@ -4841,17 +4871,17 @@ let _pendingUpload = null;
 async function runUploadWithPreview(cfg) {
   const { url, formData } = cfg;
   formData.set('preview', '1');
-  showToast('ফাইল যাচাই করা হচ্ছে...', 'primary');
+  showToast('Validating file...', 'primary');
   let data;
   try {
     const res = await fetch(url, { method: 'POST', body: formData });
     data = await res.json();
     if (!res.ok || data.error) {
-      showToast(data.error || 'ফাইল যাচাই ব্যর্থ', 'danger');
+      showToast(data.error || 'File validation failed', 'danger');
       return;
     }
   } catch (e) {
-    showToast('সার্ভারের সাথে যোগাযোগ করা যায়নি', 'danger');
+    showToast('Could not reach server', 'danger');
     return;
   }
   _pendingUpload = cfg;
@@ -4862,14 +4892,14 @@ function renderUploadPreview(data, cfg) {
   const s = data.summary;
   document.getElementById('upload-preview-title').textContent = data.title || 'Upload Preview';
   document.getElementById('upload-preview-summary').innerHTML = `
-    <span class="up-chip up-ok"><b>${s.ok}</b> ঠিক আছে</span>
-    <span class="up-chip up-warn"><b>${s.warn}</b> সতর্কতা</span>
-    <span class="up-chip up-error"><b>${s.error}</b> ভুল (বাদ যাবে)</span>
-    <span class="up-chip up-skip"><b>${s.skip}</b> বাদ/অপরিবর্তিত</span>`;
+    <span class="up-chip up-ok"><b>${s.ok}</b> Valid</span>
+    <span class="up-chip up-warn"><b>${s.warn}</b> Warning</span>
+    <span class="up-chip up-error"><b>${s.error}</b> Error (Skipped)</span>
+    <span class="up-chip up-skip"><b>${s.skip}</b> Unchanged/Skipped</span>`;
   document.getElementById('upload-preview-note').textContent = data.unit_note || '';
 
   const cols = cfg.cols || [['code', 'Code'], ['name', 'Name'], ['new', 'Value']];
-  const badge = { ok: 'ঠিক', warn: 'সতর্ক', error: 'ভুল', skip: 'বাদ' };
+  const badge = { ok: 'Valid', warn: 'Warning', error: 'Error', skip: 'Skip' };
   const rows = data.rows.map(r => `
     <tr class="up-row up-row-${r.status}">
       <td>${escHtml(r.row)}</td>
@@ -4877,15 +4907,15 @@ function renderUploadPreview(data, cfg) {
       <td><span class="up-badge up-${r.status}">${badge[r.status] || r.status}</span> ${escHtml(r.message)}</td>
     </tr>`).join('');
   document.getElementById('upload-preview-table').innerHTML = `
-    <table class="data-table up-table"><thead><tr><th>সারি</th>${cols.map(([, l]) => `<th>${escHtml(l)}</th>`).join('')}<th>অবস্থা</th></tr></thead>
+    <table class="data-table up-table"><thead><tr><th>Row</th>${cols.map(([, l]) => `<th>${escHtml(l)}</th>`).join('')}<th>Status</th></tr></thead>
     <tbody>${rows}</tbody></table>
-    ${data.truncated ? '<div class="up-note">প্রথম ৪০০ সারি দেখানো হয়েছে; কনফার্ম করলে সব বৈধ সারি প্রয়োগ হবে।</div>' : ''}`;
+    ${data.truncated ? '<div class="up-note">Showing first 400 rows; all valid rows will be applied upon confirmation.</div>' : ''}`;
 
   const btn = document.getElementById('upload-preview-confirm');
   btn.disabled = s.applicable === 0;
   btn.innerHTML = s.applicable === 0
-    ? '<i class="fas fa-ban"></i> প্রয়োগ করার মতো সারি নেই'
-    : `<i class="fas fa-check"></i> কনফার্ম — ${s.applicable} টি সারি প্রয়োগ করুন`;
+    ? '<i class="fas fa-ban"></i> No valid rows to apply'
+    : `<i class="fas fa-check"></i> Confirm — Apply ${s.applicable} rows`;
   if (cfg.sourceModal) hideModal(cfg.sourceModal);
   showModal('modal-upload-preview');
 }
@@ -4895,23 +4925,23 @@ async function confirmUploadPreview() {
   const cfg = _pendingUpload;
   const btn = document.getElementById('upload-preview-confirm');
   btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> প্রয়োগ হচ্ছে...';
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying changes...';
   cfg.formData.set('preview', '0');
   try {
     const res = await fetch(cfg.url, { method: 'POST', body: cfg.formData });
     const data = await res.json();
     if (data.success) {
       hideModal('modal-upload-preview');
-      showToast(data.message || 'সফলভাবে সম্পন্ন', 'success');
+      showToast(data.message || 'Import completed successfully', 'success');
       _pendingUpload = null;
       if (cfg.onSuccess) cfg.onSuccess(data);
     } else {
-      showToast(data.error || 'প্রয়োগ ব্যর্থ', 'danger');
+      showToast(data.error || 'Import failed', 'danger');
       btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-redo"></i> আবার চেষ্টা করুন';
+      btn.innerHTML = '<i class="fas fa-redo"></i> Try Again';
     }
   } catch (e) {
-    showToast('সার্ভারের সাথে যোগাযোগ করা যায়নি', 'danger');
+    showToast('Could not reach server', 'danger');
     btn.disabled = false;
   }
 }
@@ -4935,7 +4965,7 @@ function openOutputImportModal() {
 function submitOutputImport() {
   const f = document.getElementById('output-import-file');
   if (!f || !f.files || !f.files.length) {
-    showToast('Poloxy থেকে ডাউনলোড করা Output রিপোর্ট সিলেক্ট করুন', 'warning');
+    showToast('Please select a valid Poloxy Output report file', 'warning');
     return;
   }
   const formData = new FormData();
@@ -4945,7 +4975,7 @@ function submitOutputImport() {
   formData.append('default_date', document.getElementById('output-import-date').value);
   runUploadWithPreview({
     url: '/api/production/output-import', formData, sourceModal: 'modal-output-import',
-    cols: [['code', 'SKU Code'], ['name', 'SKU'], ['date', 'Date'], ['old', 'আগের (ctn)'], ['new', 'Poloxy (ctn)']],
+    cols: [['code', 'SKU Code'], ['name', 'SKU'], ['date', 'Date'], ['old', 'Previous (ctn)'], ['new', 'Poloxy (ctn)']],
     onSuccess: () => { loadProductionView(); loadDashboard(); }
   });
 }
@@ -4965,5 +4995,164 @@ async function downloadBackupFile() {
     return true;
   } catch (e) {
     return false;
+  }
+}
+
+
+
+// ==================== INLINE SAVE FOR PRODUCTION PLANS & STORE STOCK ====================
+
+let dirtyProductionPlans = new Set();
+let dirtyStoreStock = new Set();
+
+function markProductionPlanDirty(inp) {
+  const planId = inp.dataset.planId || inp.dataset.skuId;
+  if (planId) {
+    dirtyProductionPlans.add(inp);
+    inp.style.borderColor = 'var(--primary)';
+    inp.style.backgroundColor = 'rgba(59, 130, 246, 0.08)';
+    const saveBtn = document.getElementById('btn-save-production-plans');
+    if (saveBtn) {
+      saveBtn.classList.add('pulse-highlight');
+      saveBtn.innerHTML = '<i class="fas fa-save"></i> Save Plans *';
+    }
+  }
+}
+
+async function saveProductionPlanChanges() {
+  const btn = document.getElementById('btn-save-production-plans');
+  const cat = AppState.selectedCategory;
+  const month = AppState.selectedMonth;
+  const isCarton = AppState.displayUOM === 'Carton';
+
+  // Collect all input elements in the production table
+  const inputs = document.querySelectorAll('.plan-target-input');
+  if (inputs.length === 0) {
+    showToast('No production plans available to save.', 'info');
+    return;
+  }
+
+  const plansPayload = [];
+  inputs.forEach(inp => {
+    const planId = inp.dataset.planId ? parseInt(inp.dataset.planId) : null;
+    const skuId = inp.dataset.skuId ? parseInt(inp.dataset.skuId) : null;
+    const planDate = inp.dataset.planDate || '';
+    const ctnSize = parseFloat(inp.dataset.ctnSize || 1.0);
+    const rawVal = parseFloat(inp.value) || 0.0;
+    const plannedCtn = isCarton ? rawVal : (rawVal / ctnSize);
+
+    plansPayload.push({
+      id: planId,
+      sku_id: skuId,
+      plan_date: planDate,
+      planned_ctn: Math.round(plannedCtn * 100) / 100
+    });
+  });
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+  }
+
+  try {
+    const res = await fetch('/api/production/plans/bulk-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category_code: cat,
+        month: month,
+        plans: plansPayload
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`✅ ${data.message || 'Production plans saved successfully!'}`, 'success');
+      dirtyProductionPlans.clear();
+      loadProductionView();
+      loadDashboard();
+    } else {
+      showToast(`Error saving plans: ${data.error || 'Server error'}`, 'danger');
+    }
+  } catch (e) {
+    showToast(`Network error saving production plans: ${e.message}`, 'danger');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-save"></i> Save Plans';
+    }
+  }
+}
+
+function markStoreStockDirty(inp) {
+  const matId = inp.dataset.matId;
+  if (matId) {
+    dirtyStoreStock.add(inp);
+    inp.style.borderColor = 'var(--primary)';
+    inp.style.backgroundColor = 'rgba(59, 130, 246, 0.08)';
+    const saveBtn = document.getElementById('btn-save-store-stock');
+    if (saveBtn) {
+      saveBtn.classList.add('pulse-highlight');
+      saveBtn.innerHTML = '<i class="fas fa-save"></i> Save Stock *';
+    }
+  }
+}
+
+async function saveStoreStockChanges() {
+  const btn = document.getElementById('btn-save-store-stock');
+  const cat = AppState.selectedCategory;
+
+  const stockInputs = document.querySelectorAll('.store-stock-input');
+  const safetyInputs = document.querySelectorAll('.store-safety-input');
+
+  if (stockInputs.length === 0 && safetyInputs.length === 0) {
+    showToast('No store items available to save.', 'info');
+    return;
+  }
+
+  const itemsMap = {};
+  stockInputs.forEach(inp => {
+    const id = parseInt(inp.dataset.matId);
+    if (!itemsMap[id]) itemsMap[id] = { id };
+    itemsMap[id].current_stock = parseFloat(inp.value) || 0.0;
+  });
+
+  safetyInputs.forEach(inp => {
+    const id = parseInt(inp.dataset.matId);
+    if (!itemsMap[id]) itemsMap[id] = { id };
+    itemsMap[id].safety_stock = parseFloat(inp.value) || 0.0;
+  });
+
+  const payloadItems = Object.values(itemsMap);
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+  }
+
+  try {
+    const res = await fetch('/api/store/stock/bulk-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category_code: cat,
+        items: payloadItems
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`✅ ${data.message || 'Store stock saved successfully!'}`, 'success');
+      dirtyStoreStock.clear();
+      loadStoreStock();
+      loadDashboard();
+    } else {
+      showToast(`Error saving stock: ${data.error || 'Server error'}`, 'danger');
+    }
+  } catch (e) {
+    showToast(`Network error saving store stock: ${e.message}`, 'danger');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-save"></i> Save Stock';
+    }
   }
 }

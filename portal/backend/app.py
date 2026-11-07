@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import json
 import io
@@ -638,13 +639,13 @@ def sync_poloxy_erp():
             produced_pcs = round(produced_ctn * ctn_size, 2)
             total_produced_ctn += produced_ctn
 
-            # Check if plan already exists for this SKU and date
+            # Check if plan already exists for this SKU (exact date or monthly target)
             existing_plan = cursor.execute("""
-                SELECT id, plan_no, planned_ctn, actual_produced_ctn
+                SELECT id, plan_no, planned_ctn, actual_produced_ctn, plan_date
                 FROM production_plans
-                WHERE category_code = ? AND sku_id = ? AND plan_date = ? AND status != 'Cancelled'
-                ORDER BY id LIMIT 1
-            """, (cat_code, sku_id, target_date)).fetchone()
+                WHERE category_code = ? AND sku_id = ? AND (plan_date = ? OR month_year = ?) AND status != 'Cancelled'
+                ORDER BY CASE WHEN plan_date = ? THEN 1 ELSE 2 END, id ASC LIMIT 1
+            """, (cat_code, sku_id, target_date, target_month, target_date)).fetchone()
 
             if existing_plan:
                 old_produced = float(existing_plan["actual_produced_ctn"] or 0.0)
@@ -790,29 +791,39 @@ def sync_materials_poloxy():
         pm_items = service.fetch_godown_stock_items(godown_name, godown_id, cfg['groups']['PM']['name'], cfg['groups']['PM']['id'], date_str)
         
         all_poloxy = {}
-        all_poloxy.update(rm_items)
-        all_poloxy.update(pm_items)
-        
+        for src in (rm_items, pm_items):
+            for k, v in src.items():
+                v_name = v.get('name', '').strip()
+                if v_name and v_name.lower() not in ('total', 'sub total', 'item name', 'closing stock'):
+                    all_poloxy[k] = v
+
+        def norm_txt(s):
+            return re.sub(r'[^a-z0-9]', '', str(s).lower())
+
+        poloxy_by_norm = {norm_txt(v['name']): v for k, v in all_poloxy.items() if v.get('name')}
+        poloxy_by_code = {str(v['code']).strip().upper(): v for k, v in all_poloxy.items() if v.get('code')}
+
         db_mats = cursor.execute("SELECT id, item_code, name, type, current_stock FROM materials WHERE category_code = ?", (cat_code,)).fetchall()
         
         batch_stmts = []
         for m in db_mats:
-            m_code = m["item_code"].strip()
-            m_name_lower = m["name"].strip().lower()
+            m_code = str(m["item_code"]).strip().upper()
+            m_name = m["name"].strip()
+            norm = norm_txt(m_name)
             
-            matched_stock = None
-            if m_code in all_poloxy:
-                matched_stock = all_poloxy[m_code]['closing_stock']
-            elif m_name_lower in all_poloxy:
-                matched_stock = all_poloxy[m_name_lower]['closing_stock']
+            matched_val = None
+            if m_code in poloxy_by_code:
+                matched_val = poloxy_by_code[m_code]
+            elif norm in poloxy_by_norm:
+                matched_val = poloxy_by_norm[norm]
             else:
-                for p_key, p_val in all_poloxy.items():
-                    p_name = p_val['name'].strip().lower()
-                    if m_name_lower == p_name or (len(m_name_lower) > 4 and (m_name_lower in p_name or p_name in m_name_lower)):
-                        matched_stock = p_val['closing_stock']
+                for pn, pv in poloxy_by_norm.items():
+                    if len(norm) >= 5 and (norm in pn or pn in norm):
+                        matched_val = pv
                         break
                         
-            if matched_stock is not None:
+            if matched_val is not None:
+                matched_stock = matched_val['closing_stock']
                 old_stock = float(m["current_stock"] or 0.0)
                 new_stock = float(matched_stock)
                 diff = new_stock - old_stock
@@ -1994,6 +2005,170 @@ def create_production_plan():
         conn.close()
         return jsonify({"error": str(e)}), 400
 
+
+@app.route("/api/production/plans/bulk-save", methods=["POST"])
+def bulk_save_production_plans():
+    """
+    Bulk saves production plan targets from the Production Section table.
+    Allows planners to edit planned targets directly and save all changes in one click.
+    """
+    allowed, err_resp, err_code = check_role_permission(["Production"], "edit and save production plans")
+    if not allowed:
+        return err_resp, err_code
+
+    data = request.json or {}
+    cat_code = str(data.get("category_code") or data.get("category") or "05")
+    month = data.get("month", current_month())
+    plans = data.get("plans", [])
+
+    if not plans:
+        return jsonify({"success": False, "error": "No plans provided to save."}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+    saved_count = 0
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        for p in plans:
+            plan_id = p.get("id")
+            planned_ctn = float(p.get("planned_ctn", 0.0) or 0.0)
+            sku_id = p.get("sku_id")
+            plan_date = p.get("plan_date") or f"{month}-01"
+
+            if plan_id:
+                # Update existing plan
+                row = cursor.execute("SELECT sku_id, actual_produced_ctn FROM production_plans WHERE id = ?", (plan_id,)).fetchone()
+                if row:
+                    actual = float(row["actual_produced_ctn"] or 0.0)
+                    sid = row["sku_id"]
+                    sku = cursor.execute("SELECT ctn_size FROM skus WHERE id = ?", (sid,)).fetchone()
+                    ctn_size = float(sku["ctn_size"] or 1.0) if sku else 1.0
+                    planned_pcs = round(planned_ctn * ctn_size, 2)
+                    new_status = 'Completed' if planned_ctn > 0 and actual >= planned_ctn else ('In Production' if actual > 0 else 'Planned')
+
+                    cursor.execute("""
+                        UPDATE production_plans
+                        SET planned_ctn = ?,
+                            planned_pcs = ?,
+                            status = ?
+                        WHERE id = ?
+                    """, (planned_ctn, planned_pcs, new_status, plan_id))
+                    saved_count += 1
+            elif sku_id:
+                # Check if a plan already exists for this sku_id in this category and month / plan_date
+                plan_no = f"PP-{cat_code}-{plan_date.replace('-', '')}-{int(sku_id):03d}"
+                existing = cursor.execute("""
+                    SELECT id, actual_produced_ctn FROM production_plans 
+                    WHERE (category_code = ? AND month_year = ? AND sku_id = ?)
+                       OR plan_no = ?
+                """, (cat_code, month, sku_id, plan_no)).fetchone()
+
+                sku = cursor.execute("SELECT ctn_size FROM skus WHERE id = ?", (sku_id,)).fetchone()
+                ctn_size = float(sku["ctn_size"] or 1.0) if sku else 1.0
+                planned_pcs = round(planned_ctn * ctn_size, 2)
+
+                if existing:
+                    actual = float(existing["actual_produced_ctn"] or 0.0)
+                    new_status = 'Completed' if planned_ctn > 0 and actual >= planned_ctn else ('In Production' if actual > 0 else 'Planned')
+                    cursor.execute("""
+                        UPDATE production_plans
+                        SET planned_ctn = ?,
+                            planned_pcs = ?,
+                            status = ?
+                        WHERE id = ?
+                    """, (planned_ctn, planned_pcs, new_status, existing["id"]))
+                else:
+                    cursor.execute("""
+                        INSERT INTO production_plans (
+                            category_code, plan_no, month_year, plan_date, sku_id,
+                            planned_ctn, planned_pcs, opening_stock_ctn, opening_stock_pcs,
+                            actual_produced_ctn, actual_produced_pcs, suggested_ctn, status,
+                            created_by, notes
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0.0, 0.0, 0.0, 0.0, 'Planned', ?, 'Bulk Inline Save')
+                    """, (cat_code, plan_no, month, plan_date, sku_id, planned_ctn, planned_pcs, get_current_user_name("Planner")))
+                saved_count += 1
+
+        conn.commit()
+        conn.close()
+        invalidate_dashboard_cache()
+        return jsonify({
+            "success": True,
+            "message": f"Successfully saved {saved_count} production plans!",
+            "saved_count": saved_count
+        })
+    except Exception as e:
+        conn.close()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/store/stock/bulk-save", methods=["POST"])
+def bulk_save_store_stock():
+    """
+    Bulk saves store inventory stocks (Godown Stock, Safety Stock) directly from table.
+    Provides instant, seamless save option without opening individual modals.
+    """
+    allowed, err_resp, err_code = check_role_permission(["Store"], "update store stock and inventory")
+    if not allowed:
+        return err_resp, err_code
+
+    data = request.json or {}
+    cat_code = str(data.get("category_code") or data.get("category") or "05")
+    items = data.get("items", [])
+
+    if not items:
+        return jsonify({"success": False, "error": "No stock items provided to save."}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+    saved_count = 0
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    user_name = get_current_user_name("Store Officer")
+
+    try:
+        for it in items:
+            mat_id = it.get("id")
+            if not mat_id:
+                continue
+
+            row = cursor.execute("SELECT current_stock, safety_stock FROM materials WHERE id = ?", (mat_id,)).fetchone()
+            if not row:
+                continue
+
+            old_stock = float(row["current_stock"] or 0.0)
+            new_stock = float(it["current_stock"]) if "current_stock" in it and it["current_stock"] is not None else old_stock
+            new_safety = float(it["safety_stock"]) if "safety_stock" in it and it["safety_stock"] is not None else float(row["safety_stock"] or 0.0)
+
+            stock_diff = round(new_stock - old_stock, 4)
+
+            cursor.execute("""
+                UPDATE materials
+                SET current_stock = ?,
+                    safety_stock = ?
+                WHERE id = ?
+            """, (new_stock, new_safety, mat_id))
+            saved_count += 1
+
+            if abs(stock_diff) > 0.0001:
+                cursor.execute("""
+                    INSERT INTO stock_ledger (
+                        material_id, category_code, date, opening_qty, in_qty, out_qty,
+                        closing_qty, txn_type, ref_no, notes, created_by
+                    ) VALUES (?, ?, ?, ?, ?, 0.0, ?, 'MANUAL_ADJUST', 'INLINE-SAVE', 'Manual Store Stock Save', ?)
+                """, (mat_id, cat_code, today_str, old_stock, stock_diff, new_stock, user_name))
+
+        conn.commit()
+        conn.close()
+        invalidate_dashboard_cache()
+        return jsonify({
+            "success": True,
+            "message": f"Successfully saved {saved_count} store stock records!",
+            "saved_count": saved_count
+        })
+    except Exception as e:
+        conn.close()
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route("/api/production/plans/<int:plan_id>/update-output", methods=["POST"])
 def update_production_output(plan_id):
     allowed, err_resp, err_code = check_role_permission([], "manually edit production output (actual output comes from Poloxy - use Import Actual Output)")
@@ -2441,7 +2616,7 @@ def download_mrr_template():
     
     headers = [
         "Category Code", "Item Code *", "Material Name (Ref)", "MRR Date (YYYY-MM-DD)",
-        "Supplier Name *", "Challan No *", "Received Qty *", "Unit Price (৳)", "Vehicle No", "Remarks"
+        "Supplier Name *", "Challan No *", "Received Qty *", "Unit Price (BDT)", "Vehicle No", "Remarks"
     ]
     for c_idx, h in enumerate(headers, 1):
         cell = ws.cell(3, c_idx, h)
@@ -2487,7 +2662,7 @@ def download_mrr_template():
     ws_ref["A1"] = "PARAGON AGRO LIMITED - VALID RAW & PACKAGING MATERIAL ITEM CODES"
     style_merged_range(ws_ref, "A1:E1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
     
-    ref_headers = ["Item Code", "Material Name", "Category", "Type", "Unit Price (৳)"]
+    ref_headers = ["Item Code", "Material Name", "Category", "Type", "Unit Price (BDT)"]
     for c_i, h in enumerate(ref_headers, 1):
         cell = ws_ref.cell(3, c_i, h)
         cell.font = header_font
@@ -3262,7 +3437,7 @@ def export_excel_report():
         headers = [
             "Item Code", "Material Name", "Category", "Type", "Unit",
             "Godown Stock", "Floor Stock (WIP)", "Total Plant Stock", "Safety Stock",
-            "Deficit Qty", "In-Transit", "Unit Price (৳)", "Stock Value (৳)",
+            "Deficit Qty", "In-Transit", "Unit Price (BDT)", "Stock Value (BDT)",
             "FSN Status", "Avg Age (Days)", "Aging Bracket"
         ]
         for col_idx, h in enumerate(headers, 1):
@@ -3393,7 +3568,7 @@ def export_excel_report():
         headers = [
             "Plan No", "Plan Date", "SKU Code", "Finished Good Name",
             "Opening Stock (Poloxy)", "Planned Cartons", "Actual Produced (Poloxy)",
-            "Output Value (৳)", "Variance (Ctn)", "Achievement %", "Status", "Notes"
+            "Output Value (BDT)", "Variance (Ctn)", "Achievement %", "Status", "Notes"
         ]
         for col_idx, h in enumerate(headers, 1):
             cell = ws.cell(3, col_idx, h)
@@ -3455,7 +3630,7 @@ def export_excel_report():
         ws["A1"] = f"PARAGON AGRO LIMITED - PRODUCTION FLOOR STOCK (WIP) REGISTER ({month})"
         style_merged_range(ws, "A1:H1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
         
-        headers = ["Item Code", "Material Name", "Category", "Type", "Godown Stock", "Floor Stock (WIP)", "Total In-Plant", "Floor Stock Value (৳)"]
+        headers = ["Item Code", "Material Name", "Category", "Type", "Godown Stock", "Floor Stock (WIP)", "Total In-Plant", "Floor Stock Value (BDT)"]
         for col_idx, h in enumerate(headers, 1):
             cell = ws.cell(3, col_idx, h)
             cell.font = header_font

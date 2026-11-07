@@ -2213,3 +2213,16 @@ body.is-super-admin button.admin-only {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+@keyframes pulseHighlight {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7); }
+  70% { transform: scale(1.03); box-shadow: 0 0 0 10px rgba(37, 99, 235, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+}
+
+.pulse-highlight {
+  animation: pulseHighlight 1.5s infinite;
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+  border-color: #1d4ed8 !important;
+}

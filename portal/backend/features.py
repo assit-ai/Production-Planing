@@ -72,7 +72,7 @@ def read_table(file_storage):
     """Read first sheet of .xlsx (or a .csv) into a list of row lists."""
     name = (file_storage.filename or "").lower()
     if name.endswith(".xls"):
-        raise ValueError("পুরনো .xls ফাইল সাপোর্ট করে না। Excel-এ 'Save As' করে .xlsx বা .csv দিন।")
+        raise ValueError("Legacy .xls format is not supported. Please save as .xlsx or .csv and try again.")
     if name.endswith(".csv"):
         text = file_storage.read().decode("utf-8-sig", errors="ignore")
         return [list(r) for r in csv.reader(io.StringIO(text))]
@@ -115,13 +115,13 @@ def init_features(app, get_db, check_role_permission, get_current_session,
         if not allowed:
             return err_resp, err_code
         if "file" not in request.files:
-            return jsonify({"error": "কোনো ফাইল সিলেক্ট করা হয়নি"}), 400
+            return jsonify({"error": "No file selected."}), 400
         month = request.form.get("month") or bd_month()
         preview = is_preview()
         try:
             table = read_table(request.files["file"])
         except Exception as e:
-            return jsonify({"error": f"ফাইল পড়া যায়নি: {e}"}), 400
+            return jsonify({"error": f"Failed to read file: {e}"}), 400
 
         sku_col = fc_col = None
         header_row = 3
@@ -156,32 +156,32 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 sku = skus.get(code.upper())
                 fc = to_float(cell(row, fc_col))
                 if not sku:
-                    item.update(status="error", message="SKU Code সিস্টেমে নেই")
+                    item.update(status="error", message="SKU Code not found in system")
                 elif code.upper() in seen:
-                    item.update(name=sku["name"], status="skip", message="ফাইলে ডুপ্লিকেট সারি — প্রথমটি ধরা হয়েছে")
+                    item.update(name=sku["name"], status="skip", message="Duplicate row in file - using first occurrence")
                 elif fc is None:
-                    item.update(name=sku["name"], status="error", message="Forecast সংখ্যা সঠিক নয়")
+                    item.update(name=sku["name"], status="error", message="Invalid forecast quantity")
                 elif fc < 0:
-                    item.update(name=sku["name"], new=fc, status="error", message="Forecast ঋণাত্মক হতে পারে না")
+                    item.update(name=sku["name"], new=fc, status="error", message="Forecast quantity cannot be negative")
                 else:
                     seen.add(code.upper())
                     ex = existing.get(int(sku["id"]))
                     old = float(ex["forecast_ctn"] or 0) if ex else None
                     item.update(name=sku["name"], old=old, new=fc, sku_id=int(sku["id"]))
                     if ex is not None and abs(old - fc) < 0.001:
-                        item.update(status="skip", message="কোনো পরিবর্তন নেই")
+                        item.update(status="skip", message="No change in value")
                     elif ex is not None:
-                        item.update(message=f"রিভিশন হবে ({old:g} → {fc:g}, {fc - old:+g})")
+                        item.update(message=f"Revision ({old:g} → {fc:g}, {fc - old:+g})")
                         if old > 0 and abs(fc - old) / old > 0.5:
-                            item.update(status="warn", message=item["message"] + " — ৫০%+ পরিবর্তন, যাচাই করুন")
+                            item.update(status="warn", message=item["message"] + " - 50%+ change, please review")
                     elif fc == 0:
-                        item.update(status="warn", message="নতুন, কিন্তু Forecast ০")
+                        item.update(status="warn", message="New item with 0 forecast")
                     else:
-                        item.update(message="নতুন এন্ট্রি (Rev 0)")
+                        item.update(message="New forecast entry (Rev 0)")
                 report.append(item)
 
             if not report:
-                return jsonify({"error": "ফাইলে কোনো ডেটা সারি পাওয়া যায়নি। টেমপ্লেট ব্যবহার করুন।"}), 400
+                return jsonify({"error": "No valid data rows found in file. Please use the official template."}), 400
             if preview:
                 return preview_response(report, {"month": month, "title": f"Sales Forecast — {month}"})
 
@@ -221,9 +221,9 @@ def init_features(app, get_db, check_role_permission, get_current_session,
             conn.commit()
             invalidate_dashboard_cache()
             return jsonify({"success": True, "count": applied,
-                            "message": f"{applied} টি SKU-র ফোরকাস্ট আপডেট হয়েছে ({month})"})
+                            "message": f"Successfully updated forecast for {applied} SKUs ({month})"})
         except Exception as e:
-            return jsonify({"error": f"Forecast আপলোড ব্যর্থ: {e}"}), 400
+            return jsonify({"error": f"Forecast upload failed: {e}"}), 400
         finally:
             conn.close()
 
@@ -234,14 +234,14 @@ def init_features(app, get_db, check_role_permission, get_current_session,
         if not allowed:
             return err_resp, err_code
         if "file" not in request.files:
-            return jsonify({"error": "কোনো ফাইল সিলেক্ট করা হয়নি"}), 400
+            return jsonify({"error": "No file selected."}), 400
         cat = request.form.get("category", "ALL")
         month = request.form.get("month") or bd_month()
         preview = is_preview()
         try:
             table = read_table(request.files["file"])
         except Exception as e:
-            return jsonify({"error": f"ফাইল পড়া যায়নি: {e}"}), 400
+            return jsonify({"error": f"Failed to read file: {e}"}), 400
 
         sku_col, date_col, ctn_col, notes_col, header_row = 0, 3, 4, 5, 3
         for r in range(0, min(5, len(table))):
@@ -276,30 +276,30 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 ctns = to_float(cell(row, ctn_col))
                 pdate = norm_date(cell(row, date_col), f"{month}-01")
                 if not sku:
-                    item.update(status="error", message="SKU Code সিস্টেমে নেই")
+                    item.update(status="error", message="SKU Code not found in system")
                 elif ctns is None or ctns <= 0:
-                    item.update(name=sku["name"], status="error", message="Carton সংখ্যা ০-র বেশি হতে হবে")
+                    item.update(name=sku["name"], status="error", message="Carton quantity must be greater than 0")
                 elif pdate is None:
-                    item.update(name=sku["name"], new=ctns, status="error", message="Plan Date বোঝা যায়নি (YYYY-MM-DD দিন)")
+                    item.update(name=sku["name"], new=ctns, status="error", message="Invalid Plan Date format")
                 else:
                     item.update(name=sku["name"], date=pdate, new=ctns, sku_id=int(sku["id"]),
                                 cat=sku["category_code"], ctn_size=sku["ctn_size"] or 12,
                                 notes=str(cell(row, notes_col) or "Bulk imported plan").strip())
                     key = (int(sku["id"]), pdate)
                     if key in existing or key in seen:
-                        item.update(status="skip", message="এই SKU-র এই তারিখে প্ল্যান আগেই আছে — ডুপ্লিকেট এড়ানো হয়েছে")
+                        item.update(status="skip", message="Plan already exists for this SKU and date - skipped duplicate")
                     else:
                         seen.add(key)
                         if cat not in ("ALL", "", None) and sku["category_code"] != cat:
-                            item.update(status="warn", message=f"এই SKU Unit {sku['category_code']}-এর, আপনি Unit {cat} সিলেক্ট করেছেন")
+                            item.update(status="warn", message=f"SKU belongs to Unit {sku['category_code']}, uploading to Unit {cat}")
                         elif pdate[:7] != month:
-                            item.update(status="warn", message=f"তারিখ {pdate[:7]} মাসের, সিলেক্টেড মাস {month}")
+                            item.update(status="warn", message=f"Plan date is for month {pdate[:7]}, selected month is {month}")
                         else:
-                            item.update(message="নতুন প্ল্যান + স্টোর রিকুইজিশন তৈরি হবে")
+                            item.update(message="New production plan and material requisition will be generated")
                 report.append(item)
 
             if not report:
-                return jsonify({"error": "ফাইলে কোনো ডেটা সারি পাওয়া যায়নি। টেমপ্লেট ব্যবহার করুন।"}), 400
+                return jsonify({"error": "No valid data rows found in file. Please use the official template."}), 400
             if preview:
                 return preview_response(report, {"month": month, "title": f"Production Plans — {month}"})
 
@@ -342,9 +342,9 @@ def init_features(app, get_db, check_role_permission, get_current_session,
             conn.commit()
             invalidate_dashboard_cache()
             return jsonify({"success": True, "count": created,
-                            "message": f"{created} টি প্রোডাকশন প্ল্যান ও স্টোর রিকুইজিশন তৈরি হয়েছে"})
+                            "message": f"Successfully created {created} production plans and material requisitions"})
         except Exception as e:
-            return jsonify({"error": f"Production plan আপলোড ব্যর্থ: {e}"}), 400
+            return jsonify({"error": f"Production plan upload failed: {e}"}), 400
         finally:
             conn.close()
 
@@ -355,12 +355,12 @@ def init_features(app, get_db, check_role_permission, get_current_session,
         if not allowed:
             return err_resp, err_code
         if "file" not in request.files or not request.files["file"].filename:
-            return jsonify({"error": "কোনো ফাইল সিলেক্ট করা হয়নি"}), 400
+            return jsonify({"error": "No file selected."}), 400
         preview = is_preview()
         try:
             table = read_table(request.files["file"])
         except Exception as e:
-            return jsonify({"error": f"ফাইল পড়া যায়নি: {e}"}), 400
+            return jsonify({"error": f"Failed to read file: {e}"}), 400
 
         conn = get_db()
         try:
@@ -378,12 +378,12 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 mat = mats.get(code)
                 qty = to_float(cell(row, 6))
                 if not mat:
-                    item.update(status="error", message="Item Code সিস্টেমে নেই")
+                    item.update(status="error", message="Item Code not found in materials master")
                     report.append(item)
                     continue
                 item["name"] = mat["name"]
                 if qty is None or qty <= 0:
-                    item.update(status="error", message="Quantity ০-র বেশি হতে হবে")
+                    item.update(status="error", message="Quantity must be greater than 0")
                     report.append(item)
                     continue
                 price = to_float(cell(row, 7))
@@ -391,12 +391,12 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 if price is None or price <= 0:
                     price = master
                 mdate = norm_date(cell(row, 3), today)
-                note = "স্টকে যোগ হবে"
+                note = "Will be added to stock"
                 status = "ok"
                 if mdate is None:
-                    mdate, status, note = today, "warn", "তারিখ বোঝা যায়নি — আজকের তারিখ ধরা হবে"
+                    mdate, status, note = today, "warn", "Unrecognized date format - defaulting to today"
                 elif master > 0 and price > 0 and abs(price - master) / master > 0.3:
-                    status, note = "warn", f"দাম মাস্টার রেট ({master:g})-এর চেয়ে ৩০%+ আলাদা ({price:g})"
+                    status, note = "warn", f"Price differs by 30%+ from master rate ({master:g} vs {price:g})"
                 item.update(status=status, message=note, new=qty, price=price, date=mdate,
                             mat_id=int(mat["id"]), cat=mat["category_code"],
                             supplier=str(cell(row, 4) or "Standard Supplier").strip(),
@@ -406,7 +406,7 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 report.append(item)
 
             if not report:
-                return jsonify({"error": "ফাইলে কোনো ডেটা সারি পাওয়া যায়নি। MRR টেমপ্লেট ব্যবহার করুন।"}), 400
+                return jsonify({"error": "No valid data rows found. Please use the MRR template."}), 400
             if preview:
                 return preview_response(report, {"title": "MRR Stock Inward"})
 
@@ -436,9 +436,9 @@ def init_features(app, get_db, check_role_permission, get_current_session,
             conn.commit()
             invalidate_dashboard_cache()
             return jsonify({"success": True, "processed_count": done,
-                            "message": f"{done} টি MRR এন্ট্রি সফলভাবে স্টকে যোগ হয়েছে"})
+                            "message": f"Successfully imported {done} MRR stock inward entries into godown stock"})
         except Exception as e:
-            return jsonify({"error": f"MRR আপলোড ব্যর্থ: {e}"}), 400
+            return jsonify({"error": f"MRR upload failed: {e}"}), 400
         finally:
             conn.close()
 
@@ -452,7 +452,7 @@ def init_features(app, get_db, check_role_permission, get_current_session,
         if not allowed:
             return err_resp, err_code
         if "file" not in request.files or not request.files["file"].filename:
-            return jsonify({"error": "Poloxy থেকে ডাউনলোড করা আউটপুট রিপোর্ট সিলেক্ট করুন"}), 400
+            return jsonify({"error": "Please select a valid Poloxy Output Report file."}), 400
         preview = is_preview()
         cat = request.form.get("category", "ALL")
         qty_unit = request.form.get("qty_unit", "pcs")  # pcs (packet) | ctn
@@ -460,7 +460,7 @@ def init_features(app, get_db, check_role_permission, get_current_session,
         try:
             table = read_table(request.files["file"])
         except Exception as e:
-            return jsonify({"error": f"ফাইল পড়া যায়নি: {e}"}), 400
+            return jsonify({"error": f"Failed to read file: {e}"}), 400
 
         hdr, cols = None, {}
         for i, row in enumerate(table[:25]):
@@ -481,7 +481,7 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 hdr, cols = i, found
                 break
         if hdr is None:
-            return jsonify({"error": "রিপোর্টে কলাম চেনা যায়নি। দরকার: Item/SKU Code বা Item Name, এবং Output/Quantity (ঐচ্ছিক: Date)।"}), 400
+            return jsonify({"error": "Required columns missing. Expected: Item/SKU Code (or Name) and Output/Quantity."}), 400
 
         conn = get_db()
         try:
@@ -507,15 +507,15 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 qty = to_float(cell(row, cols["qty"]))
                 d = norm_date(cell(row, cols.get("date")), default_date) if "date" in cols else default_date
                 if sku is None:
-                    item.update(status="error", message="SKU/Item সিস্টেমের SKU তালিকায় মেলেনি")
+                    item.update(status="error", message="Item not found in SKU master catalog")
                 elif cat not in ("ALL", "", None) and sku["category_code"] != cat:
-                    item.update(name=sku["name"], status="skip", message=f"অন্য ইউনিটের SKU (Unit {sku['category_code']})")
+                    item.update(name=sku["name"], status="skip", message=f"SKU belongs to another category (Unit {sku['category_code']})")
                 elif qty is None:
-                    item.update(name=sku["name"], status="error", message="Output সংখ্যা সঠিক নয়")
+                    item.update(name=sku["name"], status="error", message="Invalid output quantity number")
                 elif qty <= 0:
-                    item.update(name=sku["name"], status="skip", message="Output ০ বা ঋণাত্মক — বাদ")
+                    item.update(name=sku["name"], status="skip", message="Output quantity is 0 or negative - skipped")
                 elif d is None:
-                    item.update(name=sku["name"], status="error", message="তারিখ বোঝা যায়নি")
+                    item.update(name=sku["name"], status="error", message="Unrecognized date format")
                 else:
                     item.update(name=sku["name"], date=d)
                     key = (int(sku["id"]), d)
@@ -538,24 +538,24 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 item = {"row": rows_txt, "code": sku["sku_code"], "name": sku["name"], "date": d,
                         "new": qty_ctn, "old": None, "status": "ok", "message": ""}
                 if plan is None:
-                    item.update(status="error", message="এই তারিখে এই SKU-র কোনো প্ল্যান নেই — আগে প্ল্যান তৈরি করুন")
+                    item.update(status="error", message="No active plan found for this date and SKU - create plan first")
                 else:
                     old = float(plan["actual_produced_ctn"] or 0)
                     planned = float(plan["planned_ctn"] or 0)
                     item.update(old=old, plan_id=int(plan["id"]), plan_no=plan["plan_no"], planned=planned,
                                 size=size, message=f"{plan['plan_no']}: {old:g} → {qty_ctn:g} ctn")
                     if abs(old - qty_ctn) < 0.005:
-                        item.update(status="skip", message="কোনো পরিবর্তন নেই (আগেই আপডেট করা)")
+                        item.update(status="skip", message="No change (already updated)")
                     elif planned > 0 and qty_ctn > planned * 1.5:
-                        item.update(status="warn", message=item["message"] + f" — প্ল্যান ({planned:g}) এর ১.৫× বেশি, যাচাই করুন")
+                        item.update(status="warn", message=item["message"] + f" - 1.5x higher than planned target ({planned:g})")
                 report.append(item)
 
             report.sort(key=lambda r: ({"error": 0, "warn": 1, "ok": 2, "skip": 3}.get(r["status"], 4), str(r.get("date"))))
             if not report:
-                return jsonify({"error": "রিপোর্টে কোনো বৈধ আউটপুট সারি পাওয়া যায়নি"}), 400
+                return jsonify({"error": "No valid production output rows found in report."}), 400
             title = "Poloxy Actual Output"
             if preview:
-                return preview_response(report, {"title": title, "unit_note": "পরিমাণ " + ("কার্টন" if qty_unit == "ctn" else "প্যাকেট/পিস") + " হিসেবে ধরা হয়েছে"})
+                return preview_response(report, {"title": title, "unit_note": "Quantity in " + ("Cartons" if is_ctn else "Packets/Pieces")})
 
             now_txt = bd_now().strftime("%d-%b-%Y %I:%M:%S %p")
             cursor = conn.cursor()
@@ -587,9 +587,9 @@ def init_features(app, get_db, check_role_permission, get_current_session,
             conn.commit()
             invalidate_dashboard_cache()
             return jsonify({"success": True, "count": applied,
-                            "message": f"Poloxy আউটপুট থেকে {applied} টি প্ল্যানের Actual Output আপডেট হয়েছে"})
+                            "message": f"Successfully updated actual output for {applied} plans from Poloxy report"})
         except Exception as e:
-            return jsonify({"error": f"আউটপুট ইম্পোর্ট ব্যর্থ: {e}"}), 400
+            return jsonify({"error": f"Output import failed: {e}"}), 400
         finally:
             conn.close()
 
@@ -649,8 +649,8 @@ def init_features(app, get_db, check_role_permission, get_current_session,
             planned, actual = float(perf["planned"] or 0), float(perf["actual"] or 0)
             ach = round(actual / planned * 100, 1) if planned > 0 else 0.0
             crit_total = one(f"SELECT COUNT(*) FROM materials m WHERE m.current_stock < m.safety_stock {mt_c}", mt_p)
-            summary.append({"label": f"{month} Actual / Plan", "value": f"{actual:,.0f} / {planned:,.0f} ctn", "sub": f"{ach}% অর্জন"})
-            summary.append({"label": "ক্রিটিক্যাল ম্যাটেরিয়াল", "value": str(crit_total), "sub": "সেফটি স্টকের নিচে"})
+            summary.append({"label": f"{month} Actual / Plan", "value": f"{actual:,.0f} / {planned:,.0f} ctn", "sub": f"Achievement: {ach:.1f}%"})
+            summary.append({"label": "Critical Materials", "value": str(crit_total), "sub": "Below Safety Stock"})
 
             # ---- SALES
             if "Sales" in groups:
@@ -663,17 +663,17 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                                  WHERE sf.month_year = ? {sk_c}""", [nm] + sk_p)
                 n0 = 0
                 if missing > 0:
-                    add("Sales", "warning", "fa-chart-line", f"{month}-এর ফোরকাস্ট বাকি",
-                        f"{total_sku} টির মধ্যে {missing} টি SKU-তে ফোরকাস্ট দেওয়া হয়নি", missing,
-                        "ফোরকাস্ট দিন", "forecast")
+                    add("Sales", "warning", "fa-chart-line", f"Pending Forecast for {month}",
+                        f"{missing} of {total_sku} SKUs missing forecast entries", missing,
+                        "Set Forecast", "forecast")
                     n0 += 1
                 if bd_now().day >= 20 and n_have == 0:
-                    add("Sales", "info", "fa-calendar-plus", f"পরের মাস ({nm}) এর ফোরকাস্ট শুরু করুন",
-                        "মাসের শেষ দিকে — প্রোডাকশন প্ল্যানিংয়ের জন্য আগেভাগে ফোরকাস্ট দরকার", None,
-                        "আপলোড/এন্ট্রি", "forecast")
+                    add("Sales", "info", "fa-calendar-plus", f"Start Forecast for Next Month ({nm})",
+                        "End of month planning - advance forecast required for production plan", None,
+                        "Upload / Entry", "forecast")
                     n0 += 1
                 if n0 == 0:
-                    add("Sales", "success", "fa-check-circle", "Sales: সব ঠিক আছে", f"{month}-এর সব SKU-তে ফোরকাস্ট আছে")
+                    add("Sales", "success", "fa-check-circle", "Sales: All Caught Up", f"Forecast entries complete for all SKUs in {month}", None, "View", "forecast")
 
             # ---- PRODUCTION
             if "Production" in groups:
@@ -681,37 +681,37 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 tp = conn.execute(f"""SELECT COUNT(*) AS c, COALESCE(SUM(planned_ctn),0) AS s FROM production_plans
                                       WHERE plan_date = ? AND status != 'Cancelled' {pl_c}""", [today] + pl_p).fetchone()
                 if tp["c"]:
-                    add("Production", "info", "fa-industry", "আজকের প্রোডাকশন প্ল্যান",
-                        f"{tp['c']} টি প্ল্যান, মোট {float(tp['s']):,.0f} কার্টন টার্গেট", tp["c"], "প্ল্যান দেখুন", "production")
+                    add("Production", "info", "fa-industry", "Today's Production Plans",
+                        f"{tp['c']} active plans, target: {float(tp['s']):,.0f} cartons", tp["c"], "View Plans", "production")
                     n0 += 1
                 overdue = one(f"""SELECT COUNT(*) FROM production_plans WHERE month_year = ? AND plan_date < ?
                                   AND actual_produced_ctn = 0 AND status != 'Cancelled' {pl_c}""", [month, today] + pl_p)
                 last = conn.execute("SELECT value FROM erp_settings WHERE key = 'last_output_import_at'").fetchone()
                 last_txt = last["value"] if last else None
                 if overdue:
-                    add("Production", "danger", "fa-exclamation-circle", "Actual Output আপডেট বাকি",
-                        f"আগের তারিখের {overdue} টি প্ল্যানে আউটপুট ০। Poloxy-এর আউটপুট রিপোর্ট ইম্পোর্ট করুন"
-                        + (f" (সর্বশেষ ইম্পোর্ট: {last_txt})" if last_txt else " (এখনও কোনো ইম্পোর্ট হয়নি)"),
-                        overdue, "Poloxy Output ইম্পোর্ট", "production", {"action": "output-import"})
+                    add("Production", "danger", "fa-exclamation-circle", "Actual Production Output Pending",
+                        f"{overdue} past plans have zero output recorded. Import Poloxy output report"
+                        + (f" (Last import: {last_txt})" if last_txt else " (No output imported yet)"),
+                        overdue, "Import Poloxy Output", "production", {"action": "output-import"})
                     n0 += 1
                 elif last_txt:
                     try:
                         age = bd_now() - datetime.strptime(last_txt, "%Y-%m-%d %H:%M")
                         if age > timedelta(days=2):
-                            add("Production", "warning", "fa-sync-alt", "Poloxy আউটপুট ২ দিনের বেশি পুরনো",
-                                f"সর্বশেষ ইম্পোর্ট: {last_txt}", None, "Poloxy Output ইম্পোর্ট", "production", {"action": "output-import"})
+                            add("Production", "warning", "fa-sync-alt", "Poloxy Output is over 2 days old",
+                                f"Last imported: {last_txt}", None, "Import Poloxy Output", "production", {"action": "output-import"})
                             n0 += 1
                     except ValueError:
                         pass
                 fc_total = one(f"""SELECT COALESCE(SUM(sf.forecast_ctn),0) FROM sales_forecast sf JOIN skus s ON sf.sku_id = s.id
                                    WHERE sf.month_year = ? {sk_c}""", [month] + sk_p)
                 if fc_total > 0 and planned == 0:
-                    add("Production", "warning", "fa-clipboard-list", f"{month}-এর প্রোডাকশন প্ল্যান তৈরি হয়নি",
-                        f"ফোরকাস্ট {float(fc_total):,.0f} কার্টন আছে, কিন্তু কোনো প্ল্যান নেই", None,
-                        "প্ল্যান তৈরি", "production")
+                    add("Production", "warning", "fa-clipboard-list", f"Create Production Plans for {month}",
+                        f"Sales forecast is {float(fc_total):,.0f} cartons, but no production plans created yet", None,
+                        "Create Plan", "production")
                     n0 += 1
                 if n0 == 0:
-                    add("Production", "success", "fa-check-circle", "Production: সব ঠিক আছে", "আজকের জন্য কোনো বাকি কাজ নেই")
+                    add("Production", "success", "fa-check-circle", "Production: All Caught Up", "No pending outputs or actions required today", None, "View", "production")
 
             # ---- STORE
             if "Store" in groups:
@@ -719,26 +719,26 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 rq_c, rq_p = _cat_clause("category_code", cats)
                 pend = one(f"""SELECT COUNT(*) FROM material_requisitions WHERE status IN ('Pending','Partially Issued') {rq_c}""", rq_p)
                 if pend:
-                    add("Store", "warning", "fa-dolly", "প্রোডাকশনে ম্যাটেরিয়াল ইস্যু বাকি",
-                        f"{pend} টি রিকুইজিশন ইস্যুর অপেক্ষায়", pend, "রিকুইজিশন দেখুন", "store", {"subTab": "requisitions"})
+                    add("Store", "warning", "fa-dolly", "Pending Material Requisitions",
+                        f"{pend} material requisitions pending issue to production floor", pend, "View Requisitions", "store", {"subTab": "requisitions"})
                     n0 += 1
                 crit = conn.execute(f"""SELECT m.name, m.current_stock, m.safety_stock FROM materials m
                                         WHERE m.current_stock < m.safety_stock {mt_c}
                                         ORDER BY (m.current_stock * 1.0 / NULLIF(m.safety_stock,0)) ASC LIMIT 3""", mt_p).fetchall()
                 if crit_total:
                     names = ", ".join(str(c["name"]) for c in crit)
-                    add("Store", "danger", "fa-box-open", "ক্রিটিক্যাল স্টক",
-                        f"{crit_total} টি ম্যাটেরিয়াল সেফটি স্টকের নিচে। সবচেয়ে কম: {names}", crit_total,
-                        "ক্রিটিক্যাল দেখুন", "store", {"filter": "critical"})
+                    add("Store", "danger", "fa-box-open", "Critical Material Stocks",
+                        f"{crit_total} materials are below safety stock threshold. Lowest: {names}", crit_total,
+                        "View Critical", "store", {"filter": "critical"})
                     n0 += 1
                 pr_c, pr_p = _cat_clause("category_code", cats)
                 transit = one(f"SELECT COUNT(*) FROM purchase_requisitions WHERE status = 'In-Transit' {pr_c}", pr_p)
                 if transit:
-                    add("Store", "info", "fa-truck", "মাল আসছে — GRN বাকি", f"{transit} টি PO ইন-ট্রানজিটে, এলে GRN দিন",
-                        transit, "PO দেখুন", "procurement")
+                    add("Store", "info", "fa-truck", "Shipments in Transit - Pending MRR",
+                        f"{transit} purchase orders in-transit - log MRR upon arrival", transit, "View POs", "procurement")
                     n0 += 1
                 if n0 == 0:
-                    add("Store", "success", "fa-check-circle", "Store: সব ঠিক আছে", "ইস্যু বা ক্রিটিক্যাল স্টকের কোনো বাকি কাজ নেই")
+                    add("Store", "success", "fa-check-circle", "Store: All Caught Up", "No pending requisitions or critical stock deficits", None, "Inventory", "store")
 
             # ---- SUPPLY CHAIN
             if "Supply Chain" in groups:
@@ -748,17 +748,17 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                                     AND m.id NOT IN (SELECT material_id FROM purchase_requisitions
                                                      WHERE status IN ('Pending','Approved','In-Transit'))""", mt_p)
                 if uncovered:
-                    add("Supply Chain", "danger", "fa-shopping-cart", "ক্রিটিক্যাল আইটেমে PR নেই",
-                        f"{uncovered} টি ক্রিটিক্যাল ম্যাটেরিয়ালের জন্য কোনো ওপেন পারচেজ রিকুইজিশন নেই", uncovered,
-                        "PR তৈরি করুন", "procurement")
+                    add("Supply Chain", "danger", "fa-shopping-cart", "Critical Materials Missing PR",
+                        f"{uncovered} critical deficit materials have no open purchase requisitions", uncovered,
+                        "Create PR", "procurement")
                     n0 += 1
                 pend_pr = one(f"SELECT COUNT(*) FROM purchase_requisitions WHERE status = 'Pending' {pr_c}", pr_p)
                 if pend_pr:
-                    add("Supply Chain", "warning", "fa-file-signature", "অনুমোদনের অপেক্ষায় PR",
-                        f"{pend_pr} টি PR Pending", pend_pr, "PR দেখুন", "procurement")
+                    add("Supply Chain", "warning", "fa-file-signature", "PRs Pending Approval",
+                        f"{pend_pr} Purchase Requisitions pending approval", pend_pr, "View PRs", "procurement")
                     n0 += 1
                 if n0 == 0:
-                    add("Supply Chain", "success", "fa-check-circle", "Supply Chain: সব ঠিক আছে", "কোনো জরুরি পারচেজ কাজ নেই")
+                    add("Supply Chain", "success", "fa-check-circle", "Supply Chain: All Caught Up", "No urgent procurement actions pending", None, "PO List", "procurement")
         finally:
             conn.close()
 
@@ -773,7 +773,7 @@ def init_features(app, get_db, check_role_permission, get_current_session,
     @app.route("/api/admin/backup", methods=["GET"])
     def admin_backup():
         if get_current_session().get("role") not in ("Super Admin", "Admin"):
-            return jsonify({"error": "Access Denied: শুধু Super Admin ব্যাকআপ নিতে পারবে"}), 403
+            return jsonify({"error": "Access Denied: Only Super Admin can take system backup"}), 403
         conn = get_db()
         try:
             names = [r[0] for r in conn.execute(
