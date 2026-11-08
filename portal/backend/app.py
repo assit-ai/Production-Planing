@@ -73,18 +73,21 @@ def get_db():
 
 def solid_fill(hex_rgb):
     """
-    Rock-solid standard Microsoft Excel solid cell fill generator.
-    Must use patternType='solid' with fgColor only (NO bgColor) and 8-hex ARGB (FF...).
-    When bgColor is passed, Excel Desktop can render cells transparent or unshaded.
+    Strict OpenPyXL standard Microsoft Excel solid cell fill generator.
+    NEVER uses fill_type='solid' with both start_color and end_color.
+    ALWAYS uses patternType='solid' with fgColor='FF' + hex (NO bgColor),
+    guaranteeing strict 8-character ARGB with Alpha FF = 100% opaque.
     """
     clean_hex = str(hex_rgb).replace('#', '').strip().upper()
     if len(clean_hex) == 6:
         clean_hex = 'FF' + clean_hex
+    elif len(clean_hex) == 8 and not clean_hex.startswith('FF'):
+        clean_hex = 'FF' + clean_hex[2:]
     return PatternFill(patternType='solid', fgColor=clean_hex)
 
 
 def style_merged_range(ws, cell_range, font=None, fill=None, border=None, alignment=None):
-    """Guarantees solid styling and fills across all merged cells in OpenPyXL."""
+    """Guarantees solid styling, fills, and borders across ALL cells in a merged range."""
     for row in ws[cell_range]:
         for cell in row:
             if font: cell.font = font
@@ -1647,6 +1650,7 @@ def download_forecast_template():
     title_fill = solid_fill("1E3A8A")
     header_fill = solid_fill("0284C7")
     zebra_fill = solid_fill("F8FAFC")
+    white_fill = solid_fill("FFFFFF")
     input_fill = solid_fill("E0F2FE")
     
     thin_border = Border(
@@ -1658,7 +1662,7 @@ def download_forecast_template():
     
     ws.merge_cells("A1:F1")
     ws["A1"] = f"PARAGON AGRO LIMITED - MONTHLY SALES FORECAST TEMPLATE ({month})"
-    style_merged_range(ws, "A1:F1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
+    style_merged_range(ws, "A1:F1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
     
     headers = ["SKU ID", "SKU Code", "Finished Good Name", "Category", "Packets per Carton", f"Forecast Cartons ({month}) *"]
     for c_idx, h in enumerate(headers, 1):
@@ -1679,7 +1683,7 @@ def download_forecast_template():
     conn.close()
     
     for r_idx, s in enumerate(skus, 4):
-        c_fill = zebra_fill if (r_idx % 2 == 0) else None
+        c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
         ws.cell(r_idx, 1, s["id"]).font = data_bold
         ws.cell(r_idx, 2, s["sku_code"]).font = data_bold
         ws.cell(r_idx, 3, s["name"]).font = data_font
@@ -1693,7 +1697,8 @@ def download_forecast_template():
         for c_i in range(1, 7):
             cell = ws.cell(r_idx, c_i)
             cell.border = thin_border
-            if c_i != 6 and c_fill: cell.fill = c_fill
+            if c_i != 6:
+                cell.fill = c_fill
         
     for col in ws.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
@@ -2601,6 +2606,7 @@ def download_mrr_template():
     title_fill = solid_fill("1E3A8A")
     header_fill = solid_fill("0284C7")
     zebra_fill = solid_fill("F8FAFC")
+    white_fill = solid_fill("FFFFFF")
     input_fill = solid_fill("E0F2FE")
     
     thin_border = Border(
@@ -2610,9 +2616,9 @@ def download_mrr_template():
         bottom=Side(style='thin', color='FFCBD5E1')
     )
     
-    ws.merge_cells("A1:I1")
+    ws.merge_cells("A1:J1")
     ws["A1"] = f"PARAGON AGRO LIMITED - MRR STOCK INWARD BULK ENTRY TEMPLATE (UNIT {cat})"
-    style_merged_range(ws, "A1:I1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
+    style_merged_range(ws, "A1:J1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
     
     headers = [
         "Category Code", "Item Code *", "Material Name (Ref)", "MRR Date (YYYY-MM-DD)",
@@ -2631,7 +2637,7 @@ def download_mrr_template():
     sample_mats = conn.execute(f"SELECT item_code, name, category_code, unit, unit_price, supplier_name FROM materials WHERE 1=1 {cat_filter} LIMIT 10", params).fetchall()
     
     for r_idx, m in enumerate(sample_mats, 4):
-        c_fill = zebra_fill if (r_idx % 2 == 0) else None
+        c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
         ws.cell(r_idx, 1, m["category_code"]).font = data_bold
         ws.cell(r_idx, 2, m["item_code"]).font = data_bold
         ws.cell(r_idx, 3, m["name"]).font = data_font
@@ -2650,7 +2656,8 @@ def download_mrr_template():
         for c_i in range(1, 11):
             cell = ws.cell(r_idx, c_i)
             cell.border = thin_border
-            if c_i != 7 and c_fill: cell.fill = c_fill
+            if c_i != 7:
+                cell.fill = c_fill
             
     for col in ws.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
@@ -2660,7 +2667,7 @@ def download_mrr_template():
     ws_ref = wb.create_sheet(title="Valid Material Codes")
     ws_ref.merge_cells("A1:E1")
     ws_ref["A1"] = "PARAGON AGRO LIMITED - VALID RAW & PACKAGING MATERIAL ITEM CODES"
-    style_merged_range(ws_ref, "A1:E1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
+    style_merged_range(ws_ref, "A1:E1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
     
     ref_headers = ["Item Code", "Material Name", "Category", "Type", "Unit Price (BDT)"]
     for c_i, h in enumerate(ref_headers, 1):
@@ -2668,18 +2675,22 @@ def download_mrr_template():
         cell.font = header_font
         cell.fill = header_fill
         cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
         
     all_mats = conn.execute("SELECT item_code, name, category_code, type, unit_price FROM materials ORDER BY category_code ASC, item_code ASC").fetchall()
     conn.close()
     
     for r_idx, m in enumerate(all_mats, 4):
+        c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
         ws_ref.cell(r_idx, 1, m["item_code"]).font = data_bold
         ws_ref.cell(r_idx, 2, m["name"]).font = data_font
         ws_ref.cell(r_idx, 3, f"Unit {m['category_code']}").font = data_font
         ws_ref.cell(r_idx, 4, m["type"]).font = data_font
         ws_ref.cell(r_idx, 5, m["unit_price"]).font = data_font
         for c_i in range(1, 6):
-            ws_ref.cell(r_idx, c_i).border = thin_border
+            cell = ws_ref.cell(r_idx, c_i)
+            cell.border = thin_border
+            cell.fill = c_fill
             
     for col in ws_ref.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
@@ -3171,6 +3182,7 @@ def download_production_template():
     title_fill = solid_fill("1E3A8A")
     header_fill = solid_fill("0284C7")
     zebra_fill = solid_fill("F8FAFC")
+    white_fill = solid_fill("FFFFFF")
     input_fill = solid_fill("E0F2FE")
     thin_border = Border(
         left=Side(style='thin', color='FFCBD5E1'),
@@ -3181,7 +3193,7 @@ def download_production_template():
     
     ws.merge_cells("A1:F1")
     ws["A1"] = f"PARAGON AGRO LIMITED - PRODUCTION PLAN IMPORT TEMPLATE ({month})"
-    style_merged_range(ws, "A1:F1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
+    style_merged_range(ws, "A1:F1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
     
     headers = ["SKU Code", "Product Name", "Category", f"Plan Date ({month}-01)", "Planned Cartons *", "Notes / Batch"]
     for c_idx, h in enumerate(headers, 1):
@@ -3202,7 +3214,7 @@ def download_production_template():
     conn.close()
     
     for r_idx, s in enumerate(skus, 4):
-        c_fill = zebra_fill if (r_idx % 2 == 0) else None
+        c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
         c1 = ws.cell(r_idx, 1, s["sku_code"])
         c1.font = data_bold
         c2 = ws.cell(r_idx, 2, s["name"])
@@ -3218,7 +3230,7 @@ def download_production_template():
         c6.font = data_font
         for c_i, cell in enumerate((c1, c2, c3, c4, c5, c6), 1):
             cell.border = thin_border
-            if c_i != 5 and c_fill:
+            if c_i != 5:
                 cell.fill = c_fill
             
     for col in ws.columns:
@@ -3413,6 +3425,7 @@ def export_excel_report():
     title_fill = solid_fill("1E3A8A") # Navy
     header_fill = solid_fill("0284C7") # Cyan/Sky Blue
     zebra_fill = solid_fill("F8FAFC")
+    white_fill = solid_fill("FFFFFF")
     
     fast_fill = solid_fill("DCFCE7") # Light Green
     slow_fill = solid_fill("FEF3C7") # Light Amber
@@ -3432,7 +3445,7 @@ def export_excel_report():
         ws = wb.create_sheet(title="Store & Stock Inventory")
         ws.merge_cells("A1:P1")
         ws["A1"] = f"PARAGON AGRO LIMITED - STORE INVENTORY, RM-PM STOCK & AGING REPORT ({month})"
-        style_merged_range(ws, "A1:P1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
+        style_merged_range(ws, "A1:P1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
         
         headers = [
             "Item Code", "Material Name", "Category", "Type", "Unit",
@@ -3471,7 +3484,7 @@ def export_excel_report():
         rows = conn.execute(sql, params).fetchall()
         
         for r_idx, r in enumerate(rows, 4):
-            c_fill = zebra_fill if (r_idx % 2 == 0) else None
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
             stock_val = r["current_stock"] or 0.0
             avg_age = 22 if stock_val > 1000 else (48 if stock_val > 100 else 75)
             bracket = "0-30 Days (Fresh)" if avg_age <= 30 else ("31-60 Days (Normal)" if avg_age <= 60 else "60+ Days (Aging)")
@@ -3502,7 +3515,7 @@ def export_excel_report():
             for c_i in range(1, 17):
                 cell = ws.cell(r_idx, c_i)
                 cell.border = thin_border
-                if c_i != 14 and c_fill: cell.fill = c_fill
+                if c_i != 14: cell.fill = c_fill
 
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
@@ -3513,7 +3526,7 @@ def export_excel_report():
         ws = wb.create_sheet(title="Sales Forecast")
         ws.merge_cells("A1:G1")
         ws["A1"] = f"PARAGON AGRO LIMITED - MONTHLY SALES FORECAST REPORT ({month})"
-        style_merged_range(ws, "A1:G1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
+        style_merged_range(ws, "A1:G1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
         
         headers = ["SKU Code", "Finished Good Name", "Category", "Packets / Ctn", f"Forecast Cartons ({month})", f"Forecast Packets ({month})", "Created By"]
         for col_idx, h in enumerate(headers, 1):
@@ -3540,7 +3553,7 @@ def export_excel_report():
         rows = conn.execute(sql, params).fetchall()
         
         for r_idx, r in enumerate(rows, 4):
-            c_fill = zebra_fill if (r_idx % 2 == 0) else None
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
             ws.cell(r_idx, 1, r["sku_code"]).font = data_bold
             ws.cell(r_idx, 2, r["name"]).font = data_font
             ws.cell(r_idx, 3, r["category"]).font = data_font
@@ -3552,7 +3565,7 @@ def export_excel_report():
             for c_i in range(1, 8):
                 cell = ws.cell(r_idx, c_i)
                 cell.border = thin_border
-                if c_fill: cell.fill = c_fill
+                cell.fill = c_fill
                 
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
@@ -3563,7 +3576,7 @@ def export_excel_report():
         ws = wb.create_sheet(title="Production Plans")
         ws.merge_cells("A1:L1")
         ws["A1"] = f"PARAGON AGRO LIMITED - PRODUCTION PLANS, OPENING STOCK & OUTPUT ({month})"
-        style_merged_range(ws, "A1:L1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
+        style_merged_range(ws, "A1:L1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
         
         headers = [
             "Plan No", "Plan Date", "SKU Code", "Finished Good Name",
@@ -3600,7 +3613,7 @@ def export_excel_report():
         rows = conn.execute(sql, params).fetchall()
         
         for r_idx, r in enumerate(rows, 4):
-            c_fill = zebra_fill if (r_idx % 2 == 0) else None
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
             ws.cell(r_idx, 1, r["plan_no"]).font = data_bold
             ws.cell(r_idx, 2, r["plan_date"]).font = data_font
             ws.cell(r_idx, 3, r["sku_code"]).font = data_bold
@@ -3617,7 +3630,7 @@ def export_excel_report():
             for c_i in range(1, 13):
                 cell = ws.cell(r_idx, c_i)
                 cell.border = thin_border
-                if c_fill: cell.fill = c_fill
+                cell.fill = c_fill
                 
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
@@ -3628,7 +3641,7 @@ def export_excel_report():
         ws = wb.create_sheet(title="Floor Stock WIP")
         ws.merge_cells("A1:H1")
         ws["A1"] = f"PARAGON AGRO LIMITED - PRODUCTION FLOOR STOCK (WIP) REGISTER ({month})"
-        style_merged_range(ws, "A1:H1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
+        style_merged_range(ws, "A1:H1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
         
         headers = ["Item Code", "Material Name", "Category", "Type", "Godown Stock", "Floor Stock (WIP)", "Total In-Plant", "Floor Stock Value (BDT)"]
         for col_idx, h in enumerate(headers, 1):
@@ -3654,7 +3667,7 @@ def export_excel_report():
         rows = conn.execute(sql, params).fetchall()
         
         for r_idx, r in enumerate(rows, 4):
-            c_fill = zebra_fill if (r_idx % 2 == 0) else None
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
             ws.cell(r_idx, 1, r["item_code"]).font = data_bold
             ws.cell(r_idx, 2, r["name"]).font = data_font
             ws.cell(r_idx, 3, f"Unit {r['category_code']}").font = data_font
@@ -3667,7 +3680,7 @@ def export_excel_report():
             for c_i in range(1, 9):
                 cell = ws.cell(r_idx, c_i)
                 cell.border = thin_border
-                if c_fill: cell.fill = c_fill
+                cell.fill = c_fill
                 
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
@@ -3683,7 +3696,7 @@ def export_excel_report():
         ws.merge_cells("A1:L1")
         time_desc = f"Date: {plan_date}" if plan_date else (f"Range: {date_from} to {date_to}" if (date_from and date_to) else f"Full Month: {month}")
         ws["A1"] = f"PARAGON AGRO LIMITED - FORECAST VS PRODUCTION REPORT ({time_desc}) - UOM: {uom.upper()}"
-        style_merged_range(ws, "A1:L1", font=title_font, fill=title_fill, alignment=Alignment(horizontal="center", vertical="center"))
+        style_merged_range(ws, "A1:L1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
         
         headers = [
             "SKU Code", "Finished Good Name", "Category", "Pack / Ctn Size",
@@ -3729,7 +3742,7 @@ def export_excel_report():
         
         is_carton = uom == "Carton"
         for r_idx, r in enumerate(rows, 4):
-            c_fill = zebra_fill if (r_idx % 2 == 0) else None
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
             orig_fc = r["original_forecast_ctn"] if is_carton else (r["original_forecast_ctn"] * r["ctn_size"])
             rev_fc = r["forecast_ctn"] if is_carton else (r["forecast_ctn"] * r["ctn_size"])
             plan_val = r["planned_ctn"] if is_carton else (r["planned_ctn"] * r["ctn_size"])
@@ -3760,7 +3773,7 @@ def export_excel_report():
             for c_i in range(1, 13):
                 cell = ws.cell(r_idx, c_i)
                 cell.border = thin_border
-                if c_i != 12 and c_fill: cell.fill = c_fill
+                if c_i != 12: cell.fill = c_fill
                 
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)

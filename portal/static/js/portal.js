@@ -2363,16 +2363,19 @@ async function submitCreateWastage() {
   }
 }
 
-// ----------------- 5. SUPER ADMIN: MASTER & BOM & USERS & ERP -----------------
+// ----------------- 5. SUPER ADMIN: MASTER & BOM & ERP -----------------
 async function loadMasterBOMView() {
   loadAdminSKUs();
   loadAdminMaterials();
-  loadAdminUsers();
   loadERPSettings();
   loadTursoStatusUI();
 }
 
 function setAdminTab(tab) {
+  if (tab === 'users') {
+    switchView('users');
+    return;
+  }
   AppState.adminSubTab = tab;
   document.querySelectorAll('#admin-tabs .tab-btn').forEach(b => {
     b.classList.toggle('active', b.getAttribute('data-tab') === tab);
@@ -2383,7 +2386,6 @@ function setAdminTab(tab) {
 
   if (tab === 'skus') loadAdminSKUs();
   else if (tab === 'materials') loadAdminMaterials();
-  else if (tab === 'users') loadAdminUsers();
   else if (tab === 'erp') loadERPSettings();
   else if (tab === 'cloud') loadTursoStatusUI();
 }
@@ -4032,6 +4034,8 @@ async function submitCreateSKU() {
       hideModal('modal-create-sku');
       showToast(`SKU ${data.sku_code} created!`, 'success');
       loadAdminSKUs();
+      if (typeof loadForecastData === 'function') loadForecastData();
+      if (typeof loadProductionPlans === 'function') loadProductionPlans();
     }
   } catch (e) {
     showToast('Failed to create SKU', 'danger');

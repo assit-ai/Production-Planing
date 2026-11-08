@@ -456,6 +456,9 @@
             <button class="btn btn-outline" onclick="openBulkForecastModal()">
               <i class="fas fa-file-upload"></i> Bulk Upload Excel
             </button>
+            <button class="btn btn-outline" onclick="openCreateSKUModal()" title="Create New Finished Good SKU">
+              <i class="fas fa-plus"></i> New Finished Good
+            </button>
             <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('forecast')">
               <i class="fas fa-file-excel" style="color:var(--success);"></i> Export Forecast
             </button>
@@ -1021,7 +1024,6 @@
             <button class="tab-btn active" data-tab="skus" onclick="setAdminTab('skus')">Finished Goods (SKUs)</button>
             <button class="tab-btn" data-tab="materials" onclick="setAdminTab('materials')">Materials Master (RM & PM)</button>
             <button class="tab-btn" data-tab="bom" onclick="setAdminTab('bom')">BOM Formulation Builder</button>
-            <button class="tab-btn" data-tab="users" onclick="setAdminTab('users')">User Management (RBAC)</button>
             <button class="tab-btn" data-tab="erp" onclick="setAdminTab('erp')">Poloxy ERP Settings</button>
             <button class="tab-btn" data-tab="cloud" onclick="setAdminTab('cloud')"><i class="fas fa-cloud"></i> Cloud DB (Turso)</button>
           </div>
@@ -1115,38 +1117,6 @@
           </div>
         </div>
 
-        <!-- Tab 4: User Management (RBAC) -->
-        <div id="admin-tab-users" class="admin-tab-content" style="display:none;">
-          <div class="action-bar">
-            <div>
-              <h3 style="font-size:1rem; font-weight:700;">User Accounts & Category Access Permissions</h3>
-              <p style="font-size:0.75rem; color:var(--text-muted);">Users restricted to specific categories cannot view or edit other categories.</p>
-            </div>
-            <button class="btn btn-primary" onclick="openCreateUserModal()">
-              <i class="fas fa-user-plus"></i> Add New User
-            </button>
-          </div>
-          <div class="card">
-            <div class="table-responsive">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Username</th>
-                    <th>Full Name</th>
-                    <th>Role</th>
-                    <th>Department</th>
-                    <th>Allowed Category</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="admin-users-tbody">
-                  <!-- Injected via JavaScript -->
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
 
         <!-- Tab 5: Poloxy ERP Settings -->
         <div id="admin-tab-erp" class="admin-tab-content" style="display:none;">

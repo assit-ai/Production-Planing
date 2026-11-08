@@ -68,6 +68,12 @@ def to_float(v):
         return None
 
 
+def to_int(v):
+    """int or None when not numeric."""
+    f = to_float(v)
+    return int(f) if f is not None else None
+
+
 def read_table(file_storage):
     """Read first sheet of .xlsx (or a .csv) into a list of row lists."""
     name = (file_storage.filename or "").lower()
@@ -124,6 +130,7 @@ def init_features(app, get_db, check_role_permission, get_current_session,
             return jsonify({"error": f"Failed to read file: {e}"}), 400
 
         sku_col = fc_col = None
+        name_col = cat_col = ctn_col = None
         header_row = 3
         for r in range(0, min(6, len(table))):
             for c, v in enumerate(table[r][:15]):
@@ -132,13 +139,25 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                     sku_col, header_row = c, r + 1
                 elif "forecast" in val:
                     fc_col = c
+                elif any(k in val for k in ["product", "finished good", "sku name", "item name", "description"]):
+                    name_col = c
+                elif "category" in val or "unit" in val:
+                    cat_col = c
+                elif any(k in val for k in ["packet", "carton", "ctn_size", "pack size", "conversion"]):
+                    ctn_col = c
         if sku_col is None or fc_col is None:
-            sku_col, fc_col, header_row = 1, 5, 3
+            sku_col, name_col, cat_col, ctn_col, fc_col, header_row = 1, 2, 3, 4, 5, 3
 
         conn = get_db()
         try:
-            skus = {str(s["sku_code"]).strip().upper(): s for s in conn.execute(
-                "SELECT id, sku_code, name FROM skus").fetchall()}
+            req_cat = str(request.form.get("category_code") or request.form.get("category") or "05").strip()
+
+            all_skus = conn.execute("SELECT id, sku_code, name, category_code, category, ctn_size FROM skus").fetchall()
+            skus_by_code = {str(s["sku_code"]).strip().upper(): s for s in all_skus}
+            def norm_txt(s):
+                return re.sub(r'[^a-z0-9]', '', str(s).lower()) if s else ''
+            skus_by_name = {norm_txt(s["name"]): s for s in all_skus if s["name"]}
+
             existing = {int(r["sku_id"]): r for r in conn.execute(
                 "SELECT sku_id, forecast_ctn, original_forecast_ctn, revision_no FROM sales_forecast WHERE month_year = ?",
                 (month,)).fetchall()}
@@ -150,19 +169,67 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 if code_val in (None, ""):
                     continue
                 code = str(code_val).strip()
+                name_val = cell(row, name_col) if name_col is not None else ""
+                cat_val = cell(row, cat_col) if cat_col is not None else ""
+                ctn_val = cell(row, ctn_col) if ctn_col is not None else ""
+
                 rn = idx + 1
                 item = {"row": rn, "code": code, "name": "", "old": None, "new": None,
                         "status": "ok", "message": ""}
-                sku = skus.get(code.upper())
-                fc = to_float(cell(row, fc_col))
+
+                # Match by SKU code, then by product name
+                sku = skus_by_code.get(code.upper())
+                if not sku and name_val:
+                    sku = skus_by_name.get(norm_txt(name_val))
                 if not sku:
-                    item.update(status="error", message="SKU Code not found in system")
-                elif code.upper() in seen:
-                    item.update(name=sku["name"], status="skip", message="Duplicate row in file - using first occurrence")
+                    sku = skus_by_name.get(norm_txt(code))
+
+                fc = to_float(cell(row, fc_col))
+
+                if code.upper() in seen:
+                    item.update(name=sku["name"] if sku else (name_val or code), status="skip", message="Duplicate row in file - using first occurrence")
                 elif fc is None:
-                    item.update(name=sku["name"], status="error", message="Invalid forecast quantity")
+                    item.update(name=sku["name"] if sku else (name_val or code), status="error", message="Invalid forecast quantity")
                 elif fc < 0:
-                    item.update(name=sku["name"], new=fc, status="error", message="Forecast quantity cannot be negative")
+                    item.update(name=sku["name"] if sku else (name_val or code), new=fc, status="error", message="Forecast quantity cannot be negative")
+                elif not sku:
+                    # Dynamically recognize & accept NEW SKU!
+                    seen.add(code.upper())
+                    cat_str = str(cat_val or "").lower()
+                    if "02" in cat_str or "frozen" in cat_str:
+                        target_cat_code = "02"
+                        target_cat_name = "Frozen Foods"
+                    elif "01" in cat_str or "chicken" in cat_str or "process" in cat_str:
+                        target_cat_code = "01"
+                        target_cat_name = "Process Chicken"
+                    elif "05" in cat_str or "dry" in cat_str or "bakery" in cat_str:
+                        target_cat_code = "05"
+                        target_cat_name = "Dry Foods"
+                    else:
+                        target_cat_code = req_cat if req_cat not in ("ALL", "") else "05"
+                        cat_map = {"05": "Dry Foods", "02": "Frozen Foods", "01": "Process Chicken"}
+                        target_cat_name = str(cat_val).strip() if cat_val else cat_map.get(target_cat_code, "Finished Goods")
+
+                    prod_name = str(name_val).strip() if name_val else code
+                    target_ctn_size = to_int(ctn_val) or 12
+
+                    new_sku_payload = {
+                        "sku_code": code,
+                        "name": prod_name,
+                        "category_code": target_cat_code,
+                        "category": target_cat_name,
+                        "ctn_size": target_ctn_size
+                    }
+                    item.update(
+                        name=prod_name,
+                        old=None,
+                        new=fc,
+                        sku_id=None,
+                        is_new_sku=True,
+                        new_sku_data=new_sku_payload,
+                        status="ok",
+                        message=f"New SKU '{code}' — will be auto-created in Master & BOM (Unit {target_cat_code})"
+                    )
                 else:
                     seen.add(code.upper())
                     ex = existing.get(int(sku["id"]))
@@ -191,7 +258,29 @@ def init_features(app, get_db, check_role_permission, get_current_session,
             for it in report:
                 if it["status"] not in ("ok", "warn"):
                     continue
-                sid, val = it["sku_id"], it["new"]
+                sid, val = it.get("sku_id"), it["new"]
+
+                # If this is a new SKU, dynamically register in skus table first
+                if it.get("is_new_sku") or not sid:
+                    new_data = it.get("new_sku_data") or {}
+                    cur = conn.cursor()
+                    existing_sku = cur.execute("SELECT id FROM skus WHERE UPPER(sku_code) = UPPER(?)", (it["code"],)).fetchone()
+                    if existing_sku:
+                        sid = existing_sku["id"]
+                    else:
+                        cur.execute("""
+                            INSERT INTO skus (category_code, sku_code, name, category, ctn_size, status)
+                            VALUES (?, ?, ?, ?, ?, 'Active')
+                        """, (
+                            new_data.get("category_code", req_cat),
+                            it["code"],
+                            new_data.get("name", it["code"]),
+                            new_data.get("category", "Finished Goods"),
+                            new_data.get("ctn_size", 12)
+                        ))
+                        sid = cur.lastrowid
+                    it["sku_id"] = sid
+
                 w1 = round(val * 0.25, 1)
                 w2 = round(val * 0.25, 1)
                 w3 = round(val * 0.25, 1)
@@ -243,13 +332,15 @@ def init_features(app, get_db, check_role_permission, get_current_session,
         except Exception as e:
             return jsonify({"error": f"Failed to read file: {e}"}), 400
 
-        sku_col, date_col, ctn_col, notes_col, header_row = 0, 3, 4, 5, 3
+        sku_col, name_col, date_col, ctn_col, notes_col, header_row = 0, 1, 3, 4, 5, 3
         for r in range(0, min(5, len(table))):
             for c, v in enumerate(table[r][:10]):
                 val = str(v or "").strip().lower()
                 if "sku code" in val:
                     sku_col, header_row = c, r + 1
-                elif "plan date" in val:
+                elif "product" in val or "name" in val or "finished good" in val:
+                    name_col = c
+                elif "plan date" in val or "date" in val:
                     date_col = c
                 elif "carton" in val:
                     ctn_col = c
@@ -258,8 +349,13 @@ def init_features(app, get_db, check_role_permission, get_current_session,
 
         conn = get_db()
         try:
-            skus = {str(s["sku_code"]).strip().upper(): s for s in conn.execute(
-                "SELECT id, sku_code, name, category_code, ctn_size FROM skus").fetchall()}
+            req_cat = str(cat if cat not in ("ALL", "", None) else "05").strip()
+            all_skus = conn.execute("SELECT id, sku_code, name, category_code, category, ctn_size FROM skus").fetchall()
+            skus_by_code = {str(s["sku_code"]).strip().upper(): s for s in all_skus}
+            def norm_txt(s):
+                return re.sub(r'[^a-z0-9]', '', str(s).lower()) if s else ''
+            skus_by_name = {norm_txt(s["name"]): s for s in all_skus if s["name"]}
+
             existing = {(int(r["sku_id"]), r["plan_date"]) for r in conn.execute(
                 "SELECT sku_id, plan_date FROM production_plans WHERE status != 'Cancelled'").fetchall()}
 
@@ -270,17 +366,38 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 if code_val in (None, ""):
                     continue
                 code = str(code_val).strip()
+                name_val = cell(row, name_col) if name_col is not None else ""
                 item = {"row": idx + 1, "code": code, "name": "", "date": "", "new": None,
                         "status": "ok", "message": ""}
-                sku = skus.get(code.upper())
+                
+                sku = skus_by_code.get(code.upper())
+                if not sku and name_val:
+                    sku = skus_by_name.get(norm_txt(name_val))
+                if not sku:
+                    sku = skus_by_name.get(norm_txt(code))
+
                 ctns = to_float(cell(row, ctn_col))
                 pdate = norm_date(cell(row, date_col), f"{month}-01")
-                if not sku:
-                    item.update(status="error", message="SKU Code not found in system")
-                elif ctns is None or ctns <= 0:
-                    item.update(name=sku["name"], status="error", message="Carton quantity must be greater than 0")
+                if ctns is None or ctns <= 0:
+                    item.update(name=sku["name"] if sku else (name_val or code), status="error", message="Carton quantity must be greater than 0")
                 elif pdate is None:
-                    item.update(name=sku["name"], new=ctns, status="error", message="Invalid Plan Date format")
+                    item.update(name=sku["name"] if sku else (name_val or code), new=ctns, status="error", message="Invalid Plan Date format")
+                elif not sku:
+                    # Auto-register new SKU
+                    prod_name = str(name_val).strip() if name_val else code
+                    item.update(name=prod_name, date=pdate, new=ctns, sku_id=None,
+                                is_new_sku=True,
+                                new_sku_data={
+                                    "sku_code": code,
+                                    "name": prod_name,
+                                    "category_code": req_cat,
+                                    "category": "Finished Goods",
+                                    "ctn_size": 12
+                                },
+                                cat=req_cat, ctn_size=12,
+                                notes=str(cell(row, notes_col) or "Bulk imported plan").strip(),
+                                status="ok",
+                                message=f"New SKU '{code}' — will be auto-created in Master & BOM (Unit {req_cat})")
                 else:
                     item.update(name=sku["name"], date=pdate, new=ctns, sku_id=int(sku["id"]),
                                 cat=sku["category_code"], ctn_size=sku["ctn_size"] or 12,
@@ -309,6 +426,26 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 if it["status"] not in ("ok", "warn"):
                     continue
                 cursor = conn.cursor()
+                sid = it.get("sku_id")
+                if it.get("is_new_sku") or not sid:
+                    new_data = it.get("new_sku_data") or {}
+                    existing_sku = cursor.execute("SELECT id FROM skus WHERE UPPER(sku_code) = UPPER(?)", (it["code"],)).fetchone()
+                    if existing_sku:
+                        sid = existing_sku["id"]
+                    else:
+                        cursor.execute("""
+                            INSERT INTO skus (category_code, sku_code, name, category, ctn_size, status)
+                            VALUES (?, ?, ?, ?, ?, 'Active')
+                        """, (
+                            new_data.get("category_code", req_cat),
+                            it["code"],
+                            new_data.get("name", it["code"]),
+                            new_data.get("category", "Finished Goods"),
+                            new_data.get("ctn_size", 12)
+                        ))
+                        sid = cursor.lastrowid
+                    it["sku_id"] = sid
+
                 max_id = int(cursor.execute("SELECT COALESCE(MAX(id), 0) FROM production_plans").fetchone()[0] or 0)
                 pmonth = it["date"][:7]
                 plan_no = f"PP-{it['cat']}-{pmonth.replace('-', '')}-{max_id + 1:03d}"
@@ -316,7 +453,7 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                     INSERT INTO production_plans (category_code, plan_no, month_year, plan_date, sku_id, planned_ctn,
                         planned_pcs, created_by, notes)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (it["cat"], plan_no, pmonth, it["date"], it["sku_id"], it["new"],
+                """, (it["cat"], plan_no, pmonth, it["date"], sid, it["new"],
                       it["new"] * it["ctn_size"], user, it["notes"]))
                 plan_id = int(cursor.lastrowid or (max_id + 1))
                 req_no = f"MR-{it['cat']}-{pmonth.replace('-', '')}-{plan_id:03d}"
