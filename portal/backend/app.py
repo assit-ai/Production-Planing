@@ -3,6 +3,8 @@ import re
 import sqlite3
 import json
 import io
+import zipfile
+from xml.etree import ElementTree as ET
 import hmac
 import hashlib
 import base64
@@ -94,6 +96,61 @@ def style_merged_range(ws, cell_range, font=None, fill=None, border=None, alignm
             if fill: cell.fill = fill
             if border: cell.border = border
             if alignment: cell.alignment = alignment
+
+
+def finalize_workbook_response(wb, filename):
+    """
+    Saves an OpenPyXL workbook and post-processes its styles in-memory.
+    Injects applyFill='1', applyBorder='1', applyFont='1', applyAlignment='1'
+    on all styled <xf> entries in xl/styles.xml.
+    
+    This guarantees 100% visible cell background fills, zebra striping, and borders
+    in Microsoft Excel Desktop, overcoming OpenPyXL's omission of applyFill='1'.
+    """
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    
+    try:
+        zin = zipfile.ZipFile(buf, 'r')
+        buf_out = io.BytesIO()
+        zout = zipfile.ZipFile(buf_out, 'w', compression=zipfile.ZIP_DEFLATED)
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == 'xl/styles.xml':
+                ET.register_namespace('', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main')
+                root = ET.fromstring(data)
+                cell_xfs = root.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}cellXfs')
+                if cell_xfs is not None:
+                    for xf in cell_xfs.findall('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}xf'):
+                        if int(xf.attrib.get('fillId', '0')) > 0:
+                            xf.set('applyFill', '1')
+                        if int(xf.attrib.get('borderId', '0')) > 0:
+                            xf.set('applyBorder', '1')
+                        if int(xf.attrib.get('fontId', '0')) > 0:
+                            xf.set('applyFont', '1')
+                        if xf.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}alignment') is not None:
+                            xf.set('applyAlignment', '1')
+                data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+            zout.writestr(item, data)
+        zout.close()
+        zin.close()
+        buf_out.seek(0)
+        return send_file(
+            buf_out,
+            as_attachment=True,
+            download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        print("XLSX Post-processing fallback error:", e)
+        buf.seek(0)
+        return send_file(
+            buf,
+            as_attachment=True,
+            download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 def rows_to_dict(rows):
     return [dict(row) for row in rows]
@@ -1649,7 +1706,7 @@ def download_forecast_template():
     
     title_fill = solid_fill("1E3A8A")
     header_fill = solid_fill("0284C7")
-    zebra_fill = solid_fill("F8FAFC")
+    zebra_fill = solid_fill("F1F5F9")
     white_fill = solid_fill("FFFFFF")
     input_fill = solid_fill("E0F2FE")
     
@@ -1704,10 +1761,7 @@ def download_forecast_template():
         max_len = max(len(str(cell.value or '')) for cell in col)
         ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 15)
         
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return send_file(buf, as_attachment=True, download_name=f"Paragon_Sales_Forecast_Template_{cat}_{month}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return finalize_workbook_response(wb, f"Paragon_Sales_Forecast_Template_{cat}_{month}.xlsx")
 
 # Smart Production Plan Suggestion (Forecast - Opening Stock + Buffer)
 @app.route("/api/production/suggest", methods=["GET"])
@@ -2605,7 +2659,7 @@ def download_mrr_template():
     
     title_fill = solid_fill("1E3A8A")
     header_fill = solid_fill("0284C7")
-    zebra_fill = solid_fill("F8FAFC")
+    zebra_fill = solid_fill("F1F5F9")
     white_fill = solid_fill("FFFFFF")
     input_fill = solid_fill("E0F2FE")
     
@@ -2696,10 +2750,7 @@ def download_mrr_template():
         max_len = max(len(str(cell.value or '')) for cell in col)
         ws_ref.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 14)
         
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return send_file(buf, as_attachment=True, download_name=f"Paragon_MRR_Stock_Inward_Template_{cat}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return finalize_workbook_response(wb, f"Paragon_MRR_Stock_Inward_Template_{cat}.xlsx")
 
 # ----------------- PRODUCTION MATERIAL REQUISITIONS (SEPARATE TAB) -----------------
 @app.route("/api/requisitions/production", methods=["GET"])
@@ -3181,7 +3232,7 @@ def download_production_template():
     data_bold = Font(name="Calibri", size=10, bold=True)
     title_fill = solid_fill("1E3A8A")
     header_fill = solid_fill("0284C7")
-    zebra_fill = solid_fill("F8FAFC")
+    zebra_fill = solid_fill("F1F5F9")
     white_fill = solid_fill("FFFFFF")
     input_fill = solid_fill("E0F2FE")
     thin_border = Border(
@@ -3237,10 +3288,7 @@ def download_production_template():
         max_len = max(len(str(cell.value or '')) for cell in col)
         ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 15)
         
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return send_file(buf, as_attachment=True, download_name=f"Paragon_Production_Plan_Template_{cat}_{month}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return finalize_workbook_response(wb, f"Paragon_Production_Plan_Template_{cat}_{month}.xlsx")
 
 # ----------------- SUPER ADMIN DATA CLEAR & RESET -----------------
 @app.route("/api/admin/clear-data", methods=["POST"])
@@ -3780,12 +3828,8 @@ def export_excel_report():
             ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 14)
 
     conn.close()
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    
     filename = f"Paragon_{section.capitalize()}_Report_Unit{cat}_{month}.xlsx"
-    return send_file(buf, as_attachment=True, download_name=filename, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return finalize_workbook_response(wb, filename)
 
 
 from features import init_features
