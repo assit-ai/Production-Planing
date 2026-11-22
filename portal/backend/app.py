@@ -9,6 +9,7 @@ import hmac
 import hashlib
 import base64
 import time
+import tempfile
 from datetime import datetime, timedelta
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -54,9 +55,24 @@ if os.environ.get("VERCEL"):
 from turso_client import TursoConnection, test_turso_connection, migrate_local_sqlite_to_turso
 from poloxy_service import PoloxyService, POLOXY_CONFIG
 
+TURSO_CONFIG_PATH = os.path.join(os.path.dirname(__file__), ".turso_config.json")
+TMP_TURSO_CONFIG = os.path.join(tempfile.gettempdir(), ".turso_config.json")
+
 def get_turso_credentials():
     url = os.environ.get("TURSO_DATABASE_URL")
     token = os.environ.get("TURSO_AUTH_TOKEN")
+    if not (url and token):
+        for path in (TURSO_CONFIG_PATH, TMP_TURSO_CONFIG):
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                        url = url or cfg.get("url")
+                        token = token or cfg.get("token")
+                        if url and token:
+                            break
+                except Exception:
+                    pass
     return url, token
 
 def get_db():
@@ -550,6 +566,9 @@ def api_migrate_to_turso():
 # ----------------- POLOXY ERP SETTINGS & SYNC -----------------
 @app.route("/api/erp/settings", methods=["GET"])
 def get_erp_settings():
+    allowed, err_resp, err_code = check_role_permission(["Super Admin", "Admin"], "view ERP configuration")
+    if not allowed:
+        return err_resp, err_code
     conn = get_db()
     rows = conn.execute("SELECT key, value FROM erp_settings").fetchall()
     conn.close()
@@ -619,8 +638,19 @@ def sync_poloxy_erp():
     poloxy_connected = False
     prod_items = {}
     fg_stock_items = {}
-
     poloxy_error = None
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Pre-load all SKUs for this unit
+    sku_rows = conn.execute("SELECT id, sku_code, name, ctn_size FROM skus WHERE category_code = ?", (cat_code,)).fetchall()
+    by_code = {str(s["sku_code"]).strip().upper(): s for s in sku_rows}
+    by_name = {str(s["name"]).strip().lower(): s for s in sku_rows}
+
+    # Pre-load existing plans in 1 fast query to avoid WAN HTTP roundtrips
+    target_date = single_date if mode == "single" else date_to
+    target_month = target_date[:7]
 
     try:
         poloxy.login()
@@ -637,34 +667,65 @@ def sync_poloxy_erp():
         # 2. Fetch live opening stock if requested
         if action in ("both", "opening_stock"):
             try:
-                # Dry Foods (05) tracks FG via factory line outputs; for other categories query godown with safe handling
-                if cat_code != "05":
-                    fg_stock_items = poloxy.fetch_godown_stock_items(godown_name, godown_id, group_name, group_id, single_date or date_from)
+                # Rule 9: Opening stock of plan_date is closing stock of previous date
+                try:
+                    dt_obj = datetime.strptime(target_date, "%Y-%m-%d")
+                    prev_date_str = (dt_obj - timedelta(days=1)).strftime("%Y-%m-%d")
+                except Exception:
+                    prev_date_str = target_date
+
+                # Gather target item names from plans and skus
+                existing_plan_items = conn.execute("""
+                    SELECT DISTINCT s.name FROM production_plans p
+                    JOIN skus s ON p.sku_id = s.id
+                    WHERE p.category_code = ? AND (p.plan_date = ? OR p.month_year = ?) AND p.status != 'Cancelled'
+                """, (cat_code, target_date, target_month)).fetchall()
+
+                target_item_names = [r["name"] for r in existing_plan_items] if existing_plan_items else [s["name"] for s in sku_rows]
+                if prod_items:
+                    for pi in prod_items.values():
+                        if pi.get("item") and pi["item"] not in target_item_names:
+                            target_item_names.append(pi["item"])
+
+                fg_stock_items = poloxy.fetch_godown_stock_items(
+                    godown_name, godown_id, group_name, group_id,
+                    date_str=prev_date_str,
+                    target_items=target_item_names
+                )
             except Exception as se:
                 print(f"[!] Warning pulling FG stock: {se}")
 
     except Exception as e:
         poloxy_error = str(e)
         print(f"[!] Poloxy Live Connection Warning: {e}. Falling back to existing database plans.")
+    existing_plans_exact = {}
+    existing_plans_month = {}
+    for ep in conn.execute("""
+        SELECT id, sku_id, plan_no, planned_ctn, actual_produced_ctn, plan_date, month_year
+        FROM production_plans
+        WHERE category_code = ? AND (plan_date = ? OR month_year = ?) AND status != 'Cancelled'
+    """, (cat_code, target_date, target_month)).fetchall():
+        sid = int(ep["sku_id"])
+        if ep["plan_date"] == target_date:
+            existing_plans_exact[sid] = ep
+        if sid not in existing_plans_month:
+            existing_plans_month[sid] = ep
 
-    conn = get_db()
-    cursor = conn.cursor()
-
-    # Load all SKUs for this unit
-    sku_rows = conn.execute("SELECT id, sku_code, name, ctn_size FROM skus WHERE category_code = ?", (cat_code,)).fetchall()
-    by_code = {str(s["sku_code"]).strip().upper(): s for s in sku_rows}
-    by_name = {str(s["name"]).strip().lower(): s for s in sku_rows}
+    # Pre-load BOM formulations
+    bom_by_sku = {}
+    for b in conn.execute("SELECT sku_id, material_id, rate_per_ctn FROM bom").fetchall():
+        bom_by_sku.setdefault(int(b["sku_id"]), []).append(b)
 
     updated_count = 0
     created_count = 0
-    total_produced_ctn = 0.0
-    total_opening_ctn = 0.0
-
-    target_date = single_date if mode == "single" else date_to
-    target_month = target_date[:7]
+    total_produced_ctn = 0
+    total_opening_ctn = 0
+    stmts = []
+    mat_deductions = {}
 
     # Process live production output from Poloxy
     if action in ("both", "actual_output") and prod_items:
+        sku_count_cur = len(sku_rows)
         for p_key, p_info in prod_items.items():
             p_name = p_info["item"].strip()
             p_qty = float(p_info["qty"] or 0.0)
@@ -683,8 +744,8 @@ def sync_poloxy_erp():
 
             if not matched_sku:
                 # Auto-register newly discovered SKU from Poloxy factory line
-                sku_count = cursor.execute("SELECT COUNT(*) FROM skus WHERE category_code = ?", (cat_code,)).fetchone()[0] + 1
-                new_code = f"SKU-{cat_code}-{sku_count:03d}"
+                sku_count_cur += 1
+                new_code = f"SKU-{cat_code}-{sku_count_cur:03d}"
                 cursor.execute("""
                     INSERT INTO skus (category_code, sku_code, name, ctn_size, unit, status)
                     VALUES (?, ?, ?, 12, 'Pkt', 'Active')
@@ -693,67 +754,74 @@ def sync_poloxy_erp():
                 matched_sku = {"id": new_sku_id, "sku_code": new_code, "name": p_name, "ctn_size": 12}
                 by_name[p_key] = matched_sku
 
-            sku_id = matched_sku["id"]
+            sku_id = int(matched_sku["id"])
             ctn_size = float(matched_sku["ctn_size"] or 1.0)
-            produced_ctn = round(p_qty, 2)
-            produced_pcs = round(produced_ctn * ctn_size, 2)
+            produced_ctn = int(round(p_qty))
+            produced_pcs = int(round(produced_ctn * ctn_size))
             total_produced_ctn += produced_ctn
 
-            # Check if plan already exists for this SKU (exact date or monthly target)
-            existing_plan = cursor.execute("""
-                SELECT id, plan_no, planned_ctn, actual_produced_ctn, plan_date
-                FROM production_plans
-                WHERE category_code = ? AND sku_id = ? AND (plan_date = ? OR month_year = ?) AND status != 'Cancelled'
-                ORDER BY CASE WHEN plan_date = ? THEN 1 ELSE 2 END, id ASC LIMIT 1
-            """, (cat_code, sku_id, target_date, target_month, target_date)).fetchone()
+            existing_plan = existing_plans_exact.get(sku_id) or existing_plans_month.get(sku_id)
 
             if existing_plan:
                 old_produced = float(existing_plan["actual_produced_ctn"] or 0.0)
                 planned = float(existing_plan["planned_ctn"] or 0.0)
                 new_status = 'Completed' if planned > 0 and produced_ctn >= planned else 'In Production'
-                cursor.execute("""
-                    UPDATE production_plans
-                    SET actual_produced_ctn = ?,
-                        actual_produced_pcs = ?,
-                        status = ?,
-                        poloxy_synced_at = ?,
-                        work_center_name = ?
-                    WHERE id = ?
-                """, (produced_ctn, produced_pcs, new_status, pull_timestamp, p_info.get("workcenter", work_center), existing_plan["id"]))
+                stmts.append((
+                    """UPDATE production_plans
+                       SET actual_produced_ctn = ?,
+                           actual_produced_pcs = ?,
+                           status = ?,
+                           poloxy_synced_at = ?,
+                           work_center_name = ?
+                       WHERE id = ?""",
+                    (produced_ctn, produced_pcs, new_status, pull_timestamp, p_info.get("workcenter", work_center), existing_plan["id"])
+                ))
                 updated_count += 1
 
                 # Deduct BOM floor stock
                 delta = produced_ctn - old_produced
                 if delta > 0:
-                    for b in cursor.execute("SELECT material_id, rate_per_ctn FROM bom WHERE sku_id = ?", (sku_id,)).fetchall():
-                        cursor.execute("""
-                            UPDATE materials SET floor_stock = MAX(0.0, ROUND(COALESCE(floor_stock, 0.0) - ?, 4))
-                            WHERE id = ?
-                        """, (round(delta * b["rate_per_ctn"], 4), b["material_id"]))
+                    for b in bom_by_sku.get(sku_id, []):
+                        m_id = b["material_id"]
+                        mat_deductions[m_id] = mat_deductions.get(m_id, 0.0) + round(delta * b["rate_per_ctn"], 4)
             else:
                 # Create a plan entry for this day so the factory's actual output is recorded
-                plan_no = f"PP-{cat_code}-{target_date.replace('-', '')}-{int(sku_id):03d}"
-                cursor.execute("""
-                    INSERT INTO production_plans (
+                plan_no = f"PP-{cat_code}-{target_date.replace('-', '')}-{sku_id:03d}"
+                stmts.append((
+                    """INSERT INTO production_plans (
                         category_code, plan_no, month_year, plan_date, sku_id,
                         planned_ctn, planned_pcs, opening_stock_ctn, opening_stock_pcs,
                         actual_produced_ctn, actual_produced_pcs, suggested_ctn, status,
                         created_by, notes, poloxy_synced_at, work_center_name
-                    ) VALUES (?, ?, ?, ?, ?, 0.0, 0.0, 0.0, 0.0, ?, ?, 0.0, 'Completed', 'Poloxy Live Sync', ?, ?, ?)
-                """, (
-                    cat_code, plan_no, target_month, target_date, sku_id,
-                    produced_ctn, produced_pcs,
-                    f"Live Poloxy Output: {produced_ctn} ctn at {pull_timestamp}",
-                    pull_timestamp, p_info.get("workcenter", work_center)
+                    ) VALUES (?, ?, ?, ?, ?, 0.0, 0.0, 0.0, 0.0, ?, ?, 0.0, 'Completed', 'Poloxy Live Sync', ?, ?, ?)""",
+                    (
+                        cat_code, plan_no, target_month, target_date, sku_id,
+                        produced_ctn, produced_pcs,
+                        f"Live Poloxy Output: {produced_ctn} ctn at {pull_timestamp}",
+                        pull_timestamp, p_info.get("workcenter", work_center)
+                    )
                 ))
                 created_count += 1
 
                 # Deduct BOM floor stock
-                for b in cursor.execute("SELECT material_id, rate_per_ctn FROM bom WHERE sku_id = ?", (sku_id,)).fetchall():
-                    cursor.execute("""
-                        UPDATE materials SET floor_stock = MAX(0.0, ROUND(COALESCE(floor_stock, 0.0) - ?, 4))
-                        WHERE id = ?
-                    """, (round(produced_ctn * b["rate_per_ctn"], 4), b["material_id"]))
+                for b in bom_by_sku.get(sku_id, []):
+                    m_id = b["material_id"]
+                    mat_deductions[m_id] = mat_deductions.get(m_id, 0.0) + round(produced_ctn * b["rate_per_ctn"], 4)
+
+        # Append aggregated BOM floor stock deductions to batch
+        for m_id, deduction in mat_deductions.items():
+            stmts.append((
+                "UPDATE materials SET floor_stock = MAX(0.0, ROUND(COALESCE(floor_stock, 0.0) - ?, 4)) WHERE id = ?",
+                (deduction, m_id)
+            ))
+
+        # High-speed batch execution (1 single pipeline roundtrip to Turso instead of dozens of sequential HTTP calls)
+        if hasattr(conn, "execute_batch"):
+            conn.execute_batch(stmts)
+        else:
+            for sql_stmt, sql_params in stmts:
+                cursor.execute(sql_stmt, sql_params)
+            conn.commit()
 
     # Process opening stock if requested
     if action in ("both", "opening_stock") and fg_stock_items:
@@ -765,6 +833,7 @@ def sync_poloxy_erp():
             WHERE p.category_code = ? AND (p.plan_date = ? OR p.month_year = ?)
         """, (cat_code, target_date, target_month)).fetchall()
 
+        stock_stmts = []
         for pl in plans_to_stock:
             sku_code = pl["sku_code"].strip()
             sku_name_low = pl["name"].strip().lower()
@@ -781,24 +850,50 @@ def sync_poloxy_erp():
                         break
 
             if matched_stock is not None:
-                opening_ctn = round(matched_stock / (pl["ctn_size"] or 1), 1)
-                opening_pcs = opening_ctn * (pl["ctn_size"] or 1)
+                ctn_size = float(pl["ctn_size"] or 12.0)
+                opening_ctn = int(round(matched_stock / ctn_size))
+                opening_pcs = int(round(matched_stock))
                 total_opening_ctn += opening_ctn
 
-                cursor.execute("""
-                    UPDATE production_plans
-                    SET opening_stock_ctn = ?,
-                        opening_stock_pcs = ?,
-                        godown_name = ?,
-                        poloxy_synced_at = ?
-                    WHERE id = ?
-                """, (opening_ctn, opening_pcs, godown_name, pull_timestamp, pl["id"]))
+                stock_stmts.append((
+                    """UPDATE production_plans
+                       SET opening_stock_ctn = ?,
+                           opening_stock_pcs = ?,
+                           godown_name = ?,
+                           poloxy_synced_at = ?
+                       WHERE id = ?""",
+                    (opening_ctn, opening_pcs, godown_name, pull_timestamp, pl["id"])
+                ))
                 updated_count += 1
+
+        if stock_stmts:
+            if hasattr(conn, "execute_batch"):
+                conn.execute_batch(stock_stmts)
+            else:
+                for s_sql, s_params in stock_stmts:
+                    cursor.execute(s_sql, s_params)
+                conn.commit()
 
     conn.commit()
     conn.close()
 
     total_items = len(prod_items) if action in ("both", "actual_output") else len(fg_stock_items)
+    if not poloxy_connected:
+        resp = jsonify({
+            "success": False,
+            "poloxy_connected": False,
+            "message": f"Could not connect to Poloxy ERP: {poloxy_error or 'Connection failed'}. Live sync aborted.",
+            "error": f"Poloxy ERP unreachable: {poloxy_error or 'Connection timeout or invalid credentials'}",
+            "poloxy_error": poloxy_error,
+            "date_range": date_display,
+            "items_found": 0,
+            "plans_updated": 0,
+            "plans_created": 0
+        })
+        resp.status_code = 502
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
+
     resp = jsonify({
         "success": True,
         "message": f"Poloxy ERP live data sync completed for {date_display}!",
@@ -1207,22 +1302,30 @@ def update_sku(sku_id):
     data = request.json or {}
     conn = get_db()
     try:
+        existing = conn.execute("SELECT * FROM skus WHERE id = ?", (sku_id,)).fetchone()
+        if not existing:
+            conn.close()
+            return jsonify({"error": "SKU not found"}), 404
+            
+        name = data.get("name") if data.get("name") is not None else existing["name"]
+        cat_code = data.get("category_code") if data.get("category_code") is not None else existing["category_code"]
+        category = data.get("category") if data.get("category") is not None else existing["category"]
+        sub_category = data.get("sub_category") if data.get("sub_category") is not None else existing["sub_category"]
+        ctn_size = int(data.get("ctn_size") if data.get("ctn_size") is not None else (existing["ctn_size"] or 12))
+        pack_size = str(data.get("pack_size") if data.get("pack_size") is not None else (existing["pack_size"] or ""))
+        uom_default = data.get("uom_default") if data.get("uom_default") is not None else (existing["uom_default"] or "Packet")
+        status = data.get("status") if data.get("status") is not None else (existing["status"] or "Active")
+
         conn.execute("""
             UPDATE skus 
-            SET name = ?, category = ?, sub_category = ?, ctn_size = ?, pack_size = ?, uom_default = ?, status = ?
+            SET name = ?, category_code = ?, category = ?, sub_category = ?, ctn_size = ?, pack_size = ?, uom_default = ?, status = ?
             WHERE id = ?
         """, (
-            data.get("name"),
-            data.get("category"),
-            data.get("sub_category"),
-            int(data.get("ctn_size", 12)),
-            str(data.get("pack_size", "")),
-            data.get("uom_default", "Packet"),
-            data.get("status", "Active"),
-            sku_id
+            name, cat_code, category, sub_category, ctn_size, pack_size, uom_default, status, sku_id
         ))
         conn.commit()
         conn.close()
+        invalidate_dashboard_cache()
         return jsonify({"success": True})
     except Exception as e:
         conn.close()
@@ -1347,19 +1450,34 @@ def update_material(mat_id):
     data = request.json or {}
     conn = get_db()
     try:
+        existing = conn.execute("SELECT * FROM materials WHERE id = ?", (mat_id,)).fetchone()
+        if not existing:
+            conn.close()
+            return jsonify({"error": "Material not found"}), 404
+            
+        name = data.get("name") if data.get("name") is not None else existing["name"]
+        m_type = data.get("type") if data.get("type") is not None else existing["type"]
+        cat_code = data.get("category_code") if data.get("category_code") is not None else existing["category_code"]
+        category = data.get("category") if data.get("category") is not None else existing["category"]
+        unit = data.get("unit") if data.get("unit") is not None else existing["unit"]
+        unit_price = float(data.get("unit_price") if data.get("unit_price") is not None else (existing["unit_price"] or 0.0))
+        safety_stock = float(data.get("safety_stock") if data.get("safety_stock") is not None else (existing["safety_stock"] or 0.0))
+        supplier_name = data.get("supplier_name") if data.get("supplier_name") is not None else existing["supplier_name"]
+        lead_time = int(data.get("lead_time_days") if data.get("lead_time_days") is not None else (existing["lead_time_days"] or 7))
+        priority = data.get("priority") if data.get("priority") is not None else (existing["priority"] or "Medium")
+
         conn.execute("""
             UPDATE materials
-            SET name = ?, type = ?, category = ?, unit = ?, unit_price = ?, safety_stock = ?,
+            SET name = ?, type = ?, category_code = ?, category = ?, unit = ?, unit_price = ?, safety_stock = ?,
                 supplier_name = ?, lead_time_days = ?, priority = ?
             WHERE id = ?
         """, (
-            data.get("name"), data.get("type", "RM"), data.get("category"), data.get("unit"),
-            float(data.get("unit_price", 0.0)), float(data.get("safety_stock", 0.0)),
-            data.get("supplier_name"), int(data.get("lead_time_days", 7)),
-            data.get("priority", "Medium"), mat_id
+            name, m_type, cat_code, category, unit, unit_price, safety_stock,
+            supplier_name, lead_time, priority, mat_id
         ))
         conn.commit()
         conn.close()
+        invalidate_dashboard_cache()
         return jsonify({"success": True})
     except Exception as e:
         conn.close()
@@ -1586,73 +1704,92 @@ def save_forecast():
     conn = get_db()
     cursor = conn.cursor()
     try:
-        # Pre-fetch all existing forecasts for the month in 1 query to avoid N roundtrips
+        # Pre-fetch all existing forecasts and SKU conversions in 1 query
         existing_rows = cursor.execute("""
             SELECT sku_id, forecast_ctn, original_forecast_ctn, revision_no, week1_ctn, week2_ctn, week3_ctn, week4_ctn 
             FROM sales_forecast WHERE month_year = ?
         """, (month,)).fetchall()
         existing_map = {int(r["sku_id"]): r for r in existing_rows}
 
+        sku_ctn_map = {int(s["id"]): int(s["ctn_size"] or 12) for s in cursor.execute("SELECT id, ctn_size FROM skus").fetchall()}
+
         updated_count = 0
+        batch_stmts = []
+
         for it in items:
             sku_id = int(it.get("sku_id") or 0)
             if not sku_id:
                 continue
-            val = float(it.get("forecast_ctn", 0.0))
-            w1 = float(it.get("week1_ctn", 0.0) or round(val * 0.25, 1))
-            w2 = float(it.get("week2_ctn", 0.0) or round(val * 0.25, 1))
-            w3 = float(it.get("week3_ctn", 0.0) or round(val * 0.25, 1))
-            w4 = float(it.get("week4_ctn", 0.0) or max(0.0, round(val - (w1 + w2 + w3), 1)))
+            # Force pure integers without decimals
+            val = int(round(float(it.get("forecast_ctn", 0.0) or 0)))
+            ctn_size = sku_ctn_map.get(sku_id, 12)
+            pcs_val = int(round(val * ctn_size))
+
+            w1 = int(round(float(it.get("week1_ctn", 0.0) or (val // 4))))
+            w2 = int(round(float(it.get("week2_ctn", 0.0) or (val // 4))))
+            w3 = int(round(float(it.get("week3_ctn", 0.0) or (val // 4))))
+            w4 = int(round(float(it.get("week4_ctn", 0.0) or max(0, val - (w1 + w2 + w3)))))
+            if w1 + w2 + w3 + w4 != val and val > 0:
+                w4 = max(0, val - (w1 + w2 + w3))
 
             existing = existing_map.get(sku_id)
             
             if existing:
-                prev_val = float(existing["forecast_ctn"] or 0.0)
-                orig_val = float(existing["original_forecast_ctn"] or prev_val)
+                prev_val = int(round(float(existing["forecast_ctn"] or 0)))
+                orig_val = int(round(float(existing["original_forecast_ctn"] or prev_val)))
                 rev_no = int(existing["revision_no"] or 0)
-                prev_w1 = float(existing["week1_ctn"] or 0.0)
-                prev_w2 = float(existing["week2_ctn"] or 0.0)
-                prev_w3 = float(existing["week3_ctn"] or 0.0)
-                prev_w4 = float(existing["week4_ctn"] or 0.0)
+                prev_w1 = int(round(float(existing["week1_ctn"] or 0)))
+                prev_w2 = int(round(float(existing["week2_ctn"] or 0)))
+                prev_w3 = int(round(float(existing["week3_ctn"] or 0)))
+                prev_w4 = int(round(float(existing["week4_ctn"] or 0)))
 
                 # Skip if totally identical
-                if abs(val - prev_val) < 0.001 and abs(w1 - prev_w1) < 0.001 and abs(w2 - prev_w2) < 0.001 and abs(w3 - prev_w3) < 0.001 and abs(w4 - prev_w4) < 0.001 and not is_revision:
+                if val == prev_val and w1 == prev_w1 and w2 == prev_w2 and w3 == prev_w3 and w4 == prev_w4 and not is_revision:
                     continue
 
                 # If value changed or explicitly marked as revision
-                if abs(val - prev_val) > 0.001 or is_revision:
+                if val != prev_val or is_revision:
                     new_rev_no = rev_no + 1
-                    var_val = round(val - prev_val, 2)
+                    var_val = val - prev_val
                     
                     # Log revision history
-                    cursor.execute("""
-                        INSERT INTO sales_forecast_revisions (sku_id, month_year, revision_no, revised_date, previous_ctn, revised_ctn, variance_ctn, reason, revised_by)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (sku_id, month, new_rev_no, revision_date, prev_val, val, var_val, revision_reason, user_name))
+                    batch_stmts.append((
+                        """INSERT INTO sales_forecast_revisions (sku_id, month_year, revision_no, revised_date, previous_ctn, revised_ctn, variance_ctn, reason, revised_by)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (sku_id, month, new_rev_no, revision_date, prev_val, val, var_val, revision_reason, user_name)
+                    ))
                     
-                    cursor.execute("""
-                        UPDATE sales_forecast 
-                        SET forecast_ctn = ?, revision_no = ?, revised_date = ?, revision_notes = ?,
+                    batch_stmts.append((
+                        """UPDATE sales_forecast 
+                        SET forecast_ctn = ?, forecast_pcs = ?, revision_no = ?, revised_date = ?, revision_notes = ?,
                             week1_ctn = ?, week2_ctn = ?, week3_ctn = ?, week4_ctn = ?,
                             updated_at = CURRENT_TIMESTAMP
-                        WHERE sku_id = ? AND month_year = ?
-                    """, (val, new_rev_no, revision_date, revision_reason, w1, w2, w3, w4, sku_id, month))
+                        WHERE sku_id = ? AND month_year = ?""",
+                        (val, pcs_val, new_rev_no, revision_date, revision_reason, w1, w2, w3, w4, sku_id, month)
+                    ))
                 else:
-                    cursor.execute("""
-                        UPDATE sales_forecast 
-                        SET week1_ctn = ?, week2_ctn = ?, week3_ctn = ?, week4_ctn = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE sku_id = ? AND month_year = ?
-                    """, (w1, w2, w3, w4, sku_id, month))
+                    batch_stmts.append((
+                        """UPDATE sales_forecast 
+                        SET forecast_pcs = ?, week1_ctn = ?, week2_ctn = ?, week3_ctn = ?, week4_ctn = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE sku_id = ? AND month_year = ?""",
+                        (pcs_val, w1, w2, w3, w4, sku_id, month)
+                    ))
             else:
                 # First time entry -> Rev 0
-                cursor.execute("""
-                    INSERT INTO sales_forecast (sku_id, month_year, forecast_ctn, original_forecast_ctn, revision_no, revised_date, revision_notes, week1_ctn, week2_ctn, week3_ctn, week4_ctn, created_by, updated_at)
-                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (sku_id, month, val, val, revision_date, revision_reason, w1, w2, w3, w4, user_name))
+                batch_stmts.append((
+                    """INSERT INTO sales_forecast (sku_id, month_year, forecast_ctn, forecast_pcs, original_forecast_ctn, revision_no, revised_date, revision_notes, week1_ctn, week2_ctn, week3_ctn, week4_ctn, created_by, updated_at)
+                    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                    (sku_id, month, val, pcs_val, val, revision_date, revision_reason, w1, w2, w3, w4, user_name)
+                ))
             
             updated_count += 1
-            
-        conn.commit()
+
+        if hasattr(conn, "execute_batch"):
+            conn.execute_batch(batch_stmts)
+        else:
+            for sql_stmt, sql_params in batch_stmts:
+                cursor.execute(sql_stmt, sql_params)
+            conn.commit()
         conn.close()
         invalidate_dashboard_cache()
         return jsonify({
@@ -1717,11 +1854,15 @@ def download_forecast_template():
         bottom=Side(style='thin', color='FFCBD5E1')
     )
     
-    ws.merge_cells("A1:F1")
-    ws["A1"] = f"PARAGON AGRO LIMITED - MONTHLY SALES FORECAST TEMPLATE ({month})"
-    style_merged_range(ws, "A1:F1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
+    ws.merge_cells("A1:K1")
+    ws["A1"] = f"PARAGON AGRO LIMITED - MONTHLY SALES FORECAST & WEEKLY BREAKDOWN ({month})"
+    style_merged_range(ws, "A1:K1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
     
-    headers = ["SKU ID", "SKU Code", "Finished Good Name", "Category", "Packets per Carton", f"Forecast Cartons ({month}) *"]
+    headers = [
+        "SKU ID", "SKU Code *", "Finished Good Name", "Category", "Packets / Ctn",
+        "Week 1 (Ctn)", "Week 2 (Ctn)", "Week 3 (Ctn)", "Week 4 (Ctn)", "Week 5 (Ctn)",
+        f"Total Forecast Cartons ({month}) *"
+    ]
     for c_idx, h in enumerate(headers, 1):
         cell = ws.cell(3, c_idx, h)
         cell.font = header_font
@@ -1730,12 +1871,22 @@ def download_forecast_template():
         cell.alignment = Alignment(horizontal="center", vertical="center")
         
     conn = get_db()
-    sql = "SELECT id, sku_code, name, category, ctn_size FROM skus WHERE status = 'Active'"
-    params = []
+    sql = """
+        SELECT s.id, s.sku_code, s.name, s.category, s.ctn_size,
+               COALESCE(sf.forecast_ctn, 0.0) AS forecast_ctn,
+               COALESCE(sf.week1_ctn, 0.0) AS week1_ctn,
+               COALESCE(sf.week2_ctn, 0.0) AS week2_ctn,
+               COALESCE(sf.week3_ctn, 0.0) AS week3_ctn,
+               COALESCE(sf.week4_ctn, 0.0) AS week4_ctn
+        FROM skus s
+        LEFT JOIN sales_forecast sf ON s.id = sf.sku_id AND sf.month_year = ?
+        WHERE s.status = 'Active'
+    """
+    params = [month]
     if cat and cat not in ('ALL', 'undefined', 'null', ''):
-        sql += " AND category_code = ?"
+        sql += " AND s.category_code = ?"
         params.append(cat)
-    sql += " ORDER BY id ASC"
+    sql += " ORDER BY s.id ASC"
     skus = conn.execute(sql, params).fetchall()
     conn.close()
     
@@ -1746,20 +1897,29 @@ def download_forecast_template():
         ws.cell(r_idx, 3, s["name"]).font = data_font
         ws.cell(r_idx, 4, s["category"]).font = data_font
         ws.cell(r_idx, 5, s["ctn_size"]).font = data_font
+
+        tot_ctn = s["forecast_ctn"] or 0.0
+        w1 = s["week1_ctn"] if s["week1_ctn"] > 0 else (round(tot_ctn * 0.25, 1) if tot_ctn > 0 else 0.0)
+        w2 = s["week2_ctn"] if s["week2_ctn"] > 0 else (round(tot_ctn * 0.25, 1) if tot_ctn > 0 else 0.0)
+        w3 = s["week3_ctn"] if s["week3_ctn"] > 0 else (round(tot_ctn * 0.25, 1) if tot_ctn > 0 else 0.0)
+        w4 = s["week4_ctn"] if s["week4_ctn"] > 0 else (max(0.0, round(tot_ctn - (w1 + w2 + w3), 1)) if tot_ctn > 0 else 0.0)
+        w5 = 0.0
+
+        for col_idx, val in enumerate([w1, w2, w3, w4, w5, tot_ctn], 6):
+            c_input = ws.cell(r_idx, col_idx, val)
+            c_input.font = data_bold
+            c_input.fill = input_fill
+            c_input.alignment = Alignment(horizontal="right", vertical="center")
         
-        fc_cell = ws.cell(r_idx, 6, 0)
-        fc_cell.font = data_bold
-        fc_cell.fill = input_fill
-        
-        for c_i in range(1, 7):
+        for c_i in range(1, 12):
             cell = ws.cell(r_idx, c_i)
             cell.border = thin_border
-            if c_i != 6:
+            if c_i < 6:
                 cell.fill = c_fill
         
     for col in ws.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
-        ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 15)
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 13)
         
     return finalize_workbook_response(wb, f"Paragon_Sales_Forecast_Template_{cat}_{month}.xlsx")
 
@@ -1872,11 +2032,11 @@ def realign_production_from_forecast():
                 """, (sku["id"], month, effective_date)).fetchall()
                 
                 if future_plans:
-                    # Distribute adjustment across future plans
-                    adj_per_plan = round(diff / len(future_plans), 1)
+                    # Distribute adjustment across future plans as whole integer cartons
+                    adj_per_plan = int(round(diff / len(future_plans)))
                     for fp in future_plans:
-                        new_ctn = max(10.0, round(float(fp["planned_ctn"]) + adj_per_plan, 1))
-                        new_pcs = new_ctn * sku["ctn_size"]
+                        new_ctn = max(10, int(round(float(fp["planned_ctn"]) + adj_per_plan)))
+                        new_pcs = int(round(new_ctn * sku["ctn_size"]))
                         cursor.execute("""
                             UPDATE production_plans 
                             SET planned_ctn = ?, planned_pcs = ?, notes = notes || ' [Auto-adjusted for Rev Forecast]'
@@ -1907,8 +2067,8 @@ def realign_production_from_forecast():
                     # Create a new daily plan for effective_date or month end
                     max_id = int(cursor.execute("SELECT MAX(id) FROM production_plans").fetchone()[0] or 0)
                     plan_no = f"PP-{sku['category_code']}-{month.replace('-', '')}-{max_id + 1:03d}"
-                    planned_ctn = max(10.0, diff)
-                    planned_pcs = planned_ctn * sku["ctn_size"]
+                    planned_ctn = max(10, int(round(diff)))
+                    planned_pcs = int(round(planned_ctn * sku["ctn_size"]))
                     plan_date = max(effective_date, f"{month}-15")
                     
                     cursor.execute("""
@@ -2004,8 +2164,8 @@ def create_production_plan():
     data = request.json or {}
     sku_id = data.get("sku_id")
     month_year = data.get("month_year", current_month())
-    planned_ctn = float(data.get("planned_ctn", 0))
-    opening_stock_ctn = float(data.get("opening_stock_ctn", 0.0))
+    planned_ctn = int(round(float(data.get("planned_ctn", 0) or 0)))
+    opening_stock_ctn = int(round(float(data.get("opening_stock_ctn", 0.0) or 0)))
     notes = data.get("notes", "")
     plan_date = data.get("plan_date", datetime.now().strftime("%Y-%m-%d"))
     
@@ -2016,9 +2176,13 @@ def create_production_plan():
     cursor = conn.cursor()
     try:
         sku = cursor.execute("SELECT category_code, ctn_size FROM skus WHERE id = ?", (sku_id,)).fetchone()
+        if not sku:
+            conn.close()
+            return jsonify({"error": f"SKU with ID {sku_id} not found."}), 404
         cat_code = sku["category_code"]
-        planned_pcs = planned_ctn * sku["ctn_size"]
-        opening_stock_pcs = opening_stock_ctn * sku["ctn_size"]
+        ctn_size = float(sku["ctn_size"] or 12.0)
+        planned_pcs = int(round(planned_ctn * ctn_size))
+        opening_stock_pcs = int(round(opening_stock_ctn * ctn_size))
         
         max_id = int(cursor.execute("SELECT MAX(id) FROM production_plans").fetchone()[0] or 0)
         plan_no = f"PP-{cat_code}-{month_year.replace('-', '')}-{max_id + 1:03d}"
@@ -2091,7 +2255,7 @@ def bulk_save_production_plans():
     try:
         for p in plans:
             plan_id = p.get("id")
-            planned_ctn = float(p.get("planned_ctn", 0.0) or 0.0)
+            planned_ctn = int(round(float(p.get("planned_ctn", 0.0) or 0.0)))
             sku_id = p.get("sku_id")
             plan_date = p.get("plan_date") or f"{month}-01"
 
@@ -2103,7 +2267,7 @@ def bulk_save_production_plans():
                     sid = row["sku_id"]
                     sku = cursor.execute("SELECT ctn_size FROM skus WHERE id = ?", (sid,)).fetchone()
                     ctn_size = float(sku["ctn_size"] or 1.0) if sku else 1.0
-                    planned_pcs = round(planned_ctn * ctn_size, 2)
+                    planned_pcs = int(round(planned_ctn * ctn_size))
                     new_status = 'Completed' if planned_ctn > 0 and actual >= planned_ctn else ('In Production' if actual > 0 else 'Planned')
 
                     cursor.execute("""
@@ -2125,7 +2289,7 @@ def bulk_save_production_plans():
 
                 sku = cursor.execute("SELECT ctn_size FROM skus WHERE id = ?", (sku_id,)).fetchone()
                 ctn_size = float(sku["ctn_size"] or 1.0) if sku else 1.0
-                planned_pcs = round(planned_ctn * ctn_size, 2)
+                planned_pcs = int(round(planned_ctn * ctn_size))
 
                 if existing:
                     actual = float(existing["actual_produced_ctn"] or 0.0)
@@ -2362,6 +2526,9 @@ def adjust_store_stock():
     cursor = conn.cursor()
     try:
         mat = cursor.execute("SELECT current_stock FROM materials WHERE id = ?", (material_id,)).fetchone()
+        if not mat:
+            conn.close()
+            return jsonify({"error": f"Material with ID {material_id} not found."}), 404
         diff = new_stock - mat["current_stock"]
         cursor.execute("UPDATE materials SET current_stock = ? WHERE id = ?", (new_stock, material_id))
         cursor.execute("""
@@ -2539,7 +2706,7 @@ def get_material_aging(mat_id):
         bracket_counts["31-60"] += remaining_to_allocate
         batches.append({
             "ref_no": "INIT-OPENING-BAL",
-            "receipt_date": (today - datetime.timedelta(days=residual_days)).strftime("%Y-%m-%d"),
+            "receipt_date": (today - timedelta(days=residual_days)).strftime("%Y-%m-%d"),
             "supplier_name": mat["supplier_name"] or "Initial Plant Stock",
             "chalan_no": "OPENING-STOCK",
             "received_qty": round(remaining_to_allocate, 2),
@@ -2647,6 +2814,7 @@ def download_mrr_template():
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     
     cat = request.args.get("category", "05")
+    conn = get_db()
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "MRR Stock Inward Template"
@@ -2685,32 +2853,17 @@ def download_mrr_template():
         cell.border = thin_border
         cell.alignment = Alignment(horizontal="center", vertical="center")
         
-    conn = get_db()
-    cat_filter = "AND category_code = ?" if cat and cat != "ALL" else ""
-    params = [cat] if cat and cat != "ALL" else []
-    sample_mats = conn.execute(f"SELECT item_code, name, category_code, unit, unit_price, supplier_name FROM materials WHERE 1=1 {cat_filter} LIMIT 10", params).fetchall()
-    
-    for r_idx, m in enumerate(sample_mats, 4):
+    # Provide pre-formatted blank rows ready for user entry (with distinct input tint for Qty, thin borders, zebra fills)
+    # Never pre-fill dummy received quantities so uploading an unmodified template is safe
+    for r_idx in range(4, 25):
         c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
-        ws.cell(r_idx, 1, m["category_code"]).font = data_bold
-        ws.cell(r_idx, 2, m["item_code"]).font = data_bold
-        ws.cell(r_idx, 3, m["name"]).font = data_font
-        ws.cell(r_idx, 4, datetime.now().strftime("%Y-%m-%d")).font = data_font
-        ws.cell(r_idx, 5, m["supplier_name"] or "Standard Supplier").font = data_font
-        ws.cell(r_idx, 6, f"CH-2026-{r_idx:03d}").font = data_font
-        
-        qty_cell = ws.cell(r_idx, 7, 100.0)
-        qty_cell.font = data_bold
-        qty_cell.fill = input_fill
-        
-        ws.cell(r_idx, 8, m["unit_price"]).font = data_font
-        ws.cell(r_idx, 9, "Dhaka Metro Ta-11-2091").font = data_font
-        ws.cell(r_idx, 10, "Bulk MRR inward received in good condition").font = data_font
-        
+        ws.cell(r_idx, 1, cat if cat != "ALL" else "05").font = data_font
         for c_i in range(1, 11):
             cell = ws.cell(r_idx, c_i)
             cell.border = thin_border
-            if c_i != 7:
+            if c_i == 7:
+                cell.fill = input_fill
+            else:
                 cell.fill = c_fill
             
     for col in ws.columns:
@@ -3060,6 +3213,9 @@ def update_purchase_status(po_id):
     cursor = conn.cursor()
     try:
         pr = cursor.execute("SELECT * FROM purchase_requisitions WHERE id = ?", (po_id,)).fetchone()
+        if not pr:
+            conn.close()
+            return jsonify({"error": f"Purchase requisition with ID {po_id} not found."}), 404
         old_status = pr["status"]
         m_id = pr["material_id"]
         req_qty = pr["req_qty"]
@@ -3087,10 +3243,16 @@ def receive_goods_grn(po_id):
     cursor = conn.cursor()
     try:
         pr = cursor.execute("SELECT * FROM purchase_requisitions WHERE id = ?", (po_id,)).fetchone()
+        if not pr:
+            conn.close()
+            return jsonify({"error": f"Purchase requisition with ID {po_id} not found."}), 404
         if received_qty <= 0: received_qty = pr["req_qty"]
         m_id = pr["material_id"]
         
         mat = cursor.execute("SELECT current_stock, in_transit FROM materials WHERE id = ?", (m_id,)).fetchone()
+        if not mat:
+            conn.close()
+            return jsonify({"error": f"Material with ID {m_id} not found."}), 404
         new_curr = mat["current_stock"] + received_qty
         new_transit = max(0.0, mat["in_transit"] - received_qty)
         cursor.execute("UPDATE materials SET current_stock = ?, in_transit = ? WHERE id = ?", (new_curr, new_transit, m_id))
@@ -3826,6 +3988,375 @@ def export_excel_report():
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
             ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 14)
+
+    # --- 6. EXECUTIVE DASHBOARD SUMMARY SHEET ---
+    if section in ("all", "dashboard"):
+        ws = wb.create_sheet(title="Dashboard Summary")
+        ws.merge_cells("A1:H1")
+        ws["A1"] = f"PARAGON AGRO LIMITED - EXECUTIVE DASHBOARD OPERATIONS SUMMARY ({month}) - UNIT {cat}"
+        style_merged_range(ws, "A1:H1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
+        
+        headers = ["SKU / Metric Code", "Metric / Product Description", "Category", "Pack / Ctn Size", "Planned Cartons", "Actual Produced", "Achievement %", "Status"]
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(3, col_idx, h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+            
+        dash_sql = """
+            SELECT s.sku_code, s.name, s.category_code, s.ctn_size,
+                   COALESCE(SUM(pp.planned_ctn), 0.0) AS planned_ctn,
+                   COALESCE(SUM(pp.actual_produced_ctn), 0.0) AS actual_ctn
+            FROM skus s
+            LEFT JOIN production_plans pp ON s.id = pp.sku_id AND pp.month_year = ?
+            WHERE s.status = 'Active'
+        """
+        dash_params = [month]
+        if cat and cat not in ('ALL', 'undefined', 'null', ''):
+            dash_sql += " AND s.category_code = ?"
+            dash_params.append(cat)
+        dash_sql += " GROUP BY s.id ORDER BY planned_ctn DESC, actual_ctn DESC"
+        dash_rows = conn.execute(dash_sql, dash_params).fetchall()
+        
+        for r_idx, r in enumerate(dash_rows, 4):
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
+            p_ctn = r["planned_ctn"] or 0.0
+            a_ctn = r["actual_ctn"] or 0.0
+            ach = round((a_ctn / p_ctn * 100), 1) if p_ctn > 0 else 0.0
+            st_text = "Completed" if ach >= 100 else ("In Production" if a_ctn > 0 else "Planned")
+            
+            ws.cell(r_idx, 1, r["sku_code"]).font = data_bold
+            ws.cell(r_idx, 2, r["name"]).font = data_font
+            ws.cell(r_idx, 3, f"Unit {r['category_code']}").font = data_font
+            ws.cell(r_idx, 4, f"{r['ctn_size']} Pcs/Ctn").font = data_font
+            ws.cell(r_idx, 5, round(p_ctn, 1)).font = data_bold
+            ws.cell(r_idx, 6, round(a_ctn, 1)).font = data_bold
+            ws.cell(r_idx, 7, f"{ach}%").font = data_bold
+            
+            sc = ws.cell(r_idx, 8, st_text)
+            sc.font = data_bold
+            if ach >= 100: sc.fill = fast_fill
+            elif a_ctn > 0: sc.fill = slow_fill
+            else: sc.fill = white_fill
+            
+            for c_i in range(1, 9):
+                cell = ws.cell(r_idx, c_i)
+                cell.border = thin_border
+                if c_i != 8: cell.fill = c_fill
+                
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 14)
+
+
+
+
+    # --- 7. GOODS INWARD (MRR) REGISTER SHEET ---
+    if section in ("all", "mrr", "store_mrr"):
+        ws = wb.create_sheet(title="MRR Inward Register")
+        ws.merge_cells("A1:M1")
+        ws["A1"] = f"PARAGON AGRO LIMITED - STORE GOODS INWARD (MRR) REGISTER ({month})"
+        style_merged_range(ws, "A1:M1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
+        
+        headers = [
+            "MRR No", "MRR Date", "Category", "Item Code", "Material Name", "Type",
+            "Supplier Name", "Challan No", "Received Qty", "Unit", "Unit Price (BDT)", "Total Value (BDT)", "Remarks"
+        ]
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(3, col_idx, h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+            
+        mrr_sql = """
+            SELECT r.*, m.item_code, m.name AS material_name, m.unit, m.type, m.category_code
+            FROM mrr_entries r
+            JOIN materials m ON r.material_id = m.id
+            WHERE 1=1
+        """
+        mrr_params = []
+        if cat and cat not in ('ALL', 'undefined', 'null', ''):
+            mrr_sql += " AND m.category_code = ?"
+            mrr_params.append(cat)
+        mrr_sql += " ORDER BY r.mrr_date DESC, r.id DESC"
+        mrr_rows = conn.execute(mrr_sql, mrr_params).fetchall()
+        
+        for r_idx, r in enumerate(mrr_rows, 4):
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
+            tot_val = round((r["received_qty"] or 0.0) * (r["unit_price"] or 0.0), 2)
+            ws.cell(r_idx, 1, r["mrr_no"]).font = data_bold
+            ws.cell(r_idx, 2, r["mrr_date"]).font = data_font
+            ws.cell(r_idx, 3, f"Unit {r['category_code']}").font = data_font
+            ws.cell(r_idx, 4, r["item_code"]).font = data_bold
+            ws.cell(r_idx, 5, r["material_name"]).font = data_font
+            ws.cell(r_idx, 6, r["type"]).font = data_font
+            ws.cell(r_idx, 7, r["supplier_name"] or "-").font = data_font
+            ws.cell(r_idx, 8, r["chalan_no"] or "-").font = data_font
+            ws.cell(r_idx, 9, r["received_qty"]).font = data_bold
+            ws.cell(r_idx, 10, r["unit"]).font = data_font
+            ws.cell(r_idx, 11, r["unit_price"]).font = data_font
+            ws.cell(r_idx, 12, tot_val).font = data_bold
+            ws.cell(r_idx, 13, r["remarks"] or "-").font = data_font
+            
+            for c_i in range(1, 14):
+                cell = ws.cell(r_idx, c_i)
+                cell.border = thin_border
+                cell.fill = c_fill
+                
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 14)
+
+    # --- 8. MATERIAL REQUISITIONS SHEET ---
+    if section in ("all", "requisitions", "store_requisitions"):
+        ws = wb.create_sheet(title="Store Requisitions")
+        ws.merge_cells("A1:M1")
+        ws["A1"] = f"PARAGON AGRO LIMITED - STORE MATERIAL REQUISITIONS REGISTER ({month})"
+        style_merged_range(ws, "A1:M1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
+        
+        headers = [
+            "Req No", "Req Date", "Category", "Plan No", "Finished Good (SKU)",
+            "Material Code", "Material Name", "Gross Req", "Avail Stock", "Net Required", "Issued Qty", "Unit", "Status"
+        ]
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(3, col_idx, h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+            
+        req_sql = """
+            SELECT mr.req_no, mr.req_date, mr.category_code, pp.plan_no, s.name AS sku_name,
+                   m.item_code, m.name AS material_name,
+                   ri.gross_required_qty, ri.available_stock, ri.required_qty, ri.issued_qty, ri.unit, ri.status
+            FROM requisition_items ri
+            JOIN material_requisitions mr ON ri.requisition_id = mr.id
+            LEFT JOIN production_plans pp ON mr.plan_id = pp.id
+            LEFT JOIN skus s ON pp.sku_id = s.id
+            JOIN materials m ON ri.material_id = m.id
+            WHERE 1=1
+        """
+        req_params = []
+        if cat and cat not in ('ALL', 'undefined', 'null', ''):
+            req_sql += " AND mr.category_code = ?"
+            req_params.append(cat)
+        req_sql += " ORDER BY mr.id DESC, ri.id ASC"
+        req_rows = conn.execute(req_sql, req_params).fetchall()
+        
+        for r_idx, r in enumerate(req_rows, 4):
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
+            ws.cell(r_idx, 1, r["req_no"]).font = data_bold
+            ws.cell(r_idx, 2, r["req_date"]).font = data_font
+            ws.cell(r_idx, 3, f"Unit {r['category_code']}").font = data_font
+            ws.cell(r_idx, 4, r["plan_no"] or "-").font = data_font
+            ws.cell(r_idx, 5, r["sku_name"] or "-").font = data_font
+            ws.cell(r_idx, 6, r["item_code"]).font = data_bold
+            ws.cell(r_idx, 7, r["material_name"]).font = data_font
+            ws.cell(r_idx, 8, r["gross_required_qty"]).font = data_font
+            ws.cell(r_idx, 9, r["available_stock"]).font = data_font
+            ws.cell(r_idx, 10, r["required_qty"]).font = data_bold
+            ws.cell(r_idx, 11, r["issued_qty"]).font = data_bold
+            ws.cell(r_idx, 12, r["unit"]).font = data_font
+            
+            sc = ws.cell(r_idx, 13, r["status"])
+            sc.font = data_bold
+            if r["status"] == "Issued": sc.fill = fast_fill
+            elif r["status"] == "Partial": sc.fill = slow_fill
+            else: sc.fill = non_moving_fill
+            
+            for c_i in range(1, 14):
+                cell = ws.cell(r_idx, c_i)
+                cell.border = thin_border
+                if c_i != 13: cell.fill = c_fill
+                
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 14)
+
+    # --- 9. FLOOR WASTAGE LOG SHEET ---
+    if section in ("all", "wastage", "store_wastage"):
+        ws = wb.create_sheet(title="Floor Wastage Log")
+        ws.merge_cells("A1:I1")
+        ws["A1"] = f"PARAGON AGRO LIMITED - PRODUCTION FLOOR WASTAGE & SCRAP LOG ({month})"
+        style_merged_range(ws, "A1:I1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
+        
+        headers = [
+            "Log Date", "Category", "Item Code", "Material Name", "Type",
+            "Wasted Qty", "Unit", "Reason / Scrap Cause", "Logged By"
+        ]
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(3, col_idx, h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+            
+        w_sql = """
+            SELECT w.*, 
+                   CASE 
+                       WHEN w.item_type = 'FG' THEN s.name 
+                       ELSE m.name 
+                   END AS material_name,
+                   CASE 
+                       WHEN w.item_type = 'FG' THEN s.sku_code 
+                       ELSE m.item_code 
+                   END AS item_code
+            FROM wastage_entries w
+            LEFT JOIN materials m ON w.item_id = m.id AND w.item_type != 'FG'
+            LEFT JOIN skus s ON w.item_id = s.id AND w.item_type = 'FG'
+            WHERE 1=1
+        """
+        w_params = []
+        if cat and cat not in ('ALL', 'undefined', 'null', ''):
+            w_sql += " AND w.category_code = ?"
+            w_params.append(cat)
+        w_sql += " ORDER BY w.id DESC"
+        w_rows = conn.execute(w_sql, w_params).fetchall()
+        
+        for r_idx, r in enumerate(w_rows, 4):
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
+            ws.cell(r_idx, 1, r["date"]).font = data_font
+            ws.cell(r_idx, 2, f"Unit {r['category_code']}").font = data_font
+            ws.cell(r_idx, 3, r["item_code"] or "-").font = data_bold
+            ws.cell(r_idx, 4, r["material_name"] or "-").font = data_font
+            ws.cell(r_idx, 5, r["item_type"] or "RM").font = data_font
+            ws.cell(r_idx, 6, r["qty"]).font = data_bold
+            ws.cell(r_idx, 7, r["unit"] or "Kg").font = data_font
+            ws.cell(r_idx, 8, r["reason"] or "-").font = data_font
+            ws.cell(r_idx, 9, r["created_by"] or "Floor Supervisor").font = data_font
+            
+            for c_i in range(1, 10):
+                cell = ws.cell(r_idx, c_i)
+                cell.border = thin_border
+                cell.fill = c_fill
+                
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 14)
+
+    # --- 10. STOCK TRANSACTION LEDGER SHEET ---
+    if section in ("all", "ledger", "store_ledger"):
+        ws = wb.create_sheet(title="Stock Ledger")
+        ws.merge_cells("A1:J1")
+        ws["A1"] = f"PARAGON AGRO LIMITED - STOCK TRANSACTION LEDGER ({month})"
+        style_merged_range(ws, "A1:J1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
+        
+        headers = [
+            "Date / Time", "Txn Type", "Reference No", "Item Code", "Material Name",
+            "Category", "Quantity", "Balance After", "Notes", "Created By"
+        ]
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(3, col_idx, h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+            
+        t_sql = """
+            SELECT t.*, m.item_code, m.name AS material_name, m.category_code
+            FROM store_transactions t
+            JOIN materials m ON t.material_id = m.id
+            WHERE 1=1
+        """
+        t_params = []
+        if cat and cat not in ('ALL', 'undefined', 'null', ''):
+            t_sql += " AND m.category_code = ?"
+            t_params.append(cat)
+        t_sql += " ORDER BY t.id DESC LIMIT 500"
+        t_rows = conn.execute(t_sql, t_params).fetchall()
+        
+        for r_idx, r in enumerate(t_rows, 4):
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
+            ws.cell(r_idx, 1, r["created_at"]).font = data_font
+            ws.cell(r_idx, 2, r["txn_type"]).font = data_bold
+            ws.cell(r_idx, 3, r["reference_no"] or "-").font = data_font
+            ws.cell(r_idx, 4, r["item_code"]).font = data_bold
+            ws.cell(r_idx, 5, r["material_name"]).font = data_font
+            ws.cell(r_idx, 6, f"Unit {r['category_code']}").font = data_font
+            ws.cell(r_idx, 7, r["qty"]).font = data_bold
+            ws.cell(r_idx, 8, r["balance_after"]).font = data_bold
+            ws.cell(r_idx, 9, r["notes"] or "-").font = data_font
+            ws.cell(r_idx, 10, r["created_by"] or "Store Admin").font = data_font
+            
+            for c_i in range(1, 11):
+                cell = ws.cell(r_idx, c_i)
+                cell.border = thin_border
+                cell.fill = c_fill
+                
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 14)
+
+    # --- 11. PURCHASE REQUISITIONS & SCM PO SHEET ---
+    if section in ("all", "procurement", "supply_chain", "po"):
+        ws = wb.create_sheet(title="Purchase Orders SCM")
+        ws.merge_cells("A1:L1")
+        ws["A1"] = f"PARAGON AGRO LIMITED - PURCHASE REQUISITIONS & SCM TRACKING ({month})"
+        style_merged_range(ws, "A1:L1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
+        
+        headers = [
+            "PO / PR No", "Month", "Category", "Item Code", "Material Name",
+            "Req Qty", "Unit", "Unit Price (BDT)", "Total Value (BDT)", "Supplier Name", "Status", "Remarks"
+        ]
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(3, col_idx, h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+            
+        po_sql = """
+            SELECT pr.*, m.item_code, m.name AS material_name, m.unit
+            FROM purchase_requisitions pr
+            JOIN materials m ON pr.material_id = m.id
+            WHERE 1=1
+        """
+        po_params = []
+        if cat and cat not in ('ALL', 'undefined', 'null', ''):
+            po_sql += " AND pr.category_code = ?"
+            po_params.append(cat)
+        po_sql += " ORDER BY pr.id DESC"
+        po_rows = conn.execute(po_sql, po_params).fetchall()
+        
+        for r_idx, r in enumerate(po_rows, 4):
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
+            ws.cell(r_idx, 1, r["po_no"]).font = data_bold
+            ws.cell(r_idx, 2, r["month_year"]).font = data_font
+            ws.cell(r_idx, 3, f"Unit {r['category_code']}").font = data_font
+            ws.cell(r_idx, 4, r["item_code"]).font = data_bold
+            ws.cell(r_idx, 5, r["material_name"]).font = data_font
+            ws.cell(r_idx, 6, r["req_qty"]).font = data_bold
+            ws.cell(r_idx, 7, r["unit"]).font = data_font
+            ws.cell(r_idx, 8, r["unit_price"]).font = data_font
+            ws.cell(r_idx, 9, r["total_value"]).font = data_bold
+            ws.cell(r_idx, 10, r["supplier_name"] or "-").font = data_font
+            
+            sc = ws.cell(r_idx, 11, r["status"])
+            sc.font = data_bold
+            if r["status"] == "Received": sc.fill = fast_fill
+            elif r["status"] == "In-Transit": sc.fill = slow_fill
+            else: sc.fill = white_fill
+            
+            ws.cell(r_idx, 12, r["remarks"] or "-").font = data_font
+            
+            for c_i in range(1, 13):
+                cell = ws.cell(r_idx, c_i)
+                cell.border = thin_border
+                if c_i != 11: cell.fill = c_fill
+                
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 14)
+
+    # --- 12. SAFEGUARD: ENSURE WORKBOOK IS NEVER EMPTY ---
+    if len(wb.sheetnames) == 0:
+        ws_fb = wb.create_sheet(title="Report Overview")
+        ws_fb.merge_cells("A1:G1")
+        ws_fb["A1"] = f"PARAGON AGRO LIMITED - REPORT OVERVIEW ({section.upper()}) - UNIT {cat}"
+        style_merged_range(ws_fb, "A1:G1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
+        ws_fb.cell(3, 1, f"Report section '{section}' generated successfully for Unit {cat} ({month}).").font = data_bold
 
     conn.close()
     filename = f"Paragon_{section.capitalize()}_Report_Unit{cat}_{month}.xlsx"

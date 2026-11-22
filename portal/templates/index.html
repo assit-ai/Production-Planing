@@ -23,7 +23,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-  <link rel="stylesheet" href="/static/css/portal.css?v=20261102_v4">
+  <link rel="stylesheet" href="/static/css/portal.css?v=20261113_v2">
 </head>
 <body>
 
@@ -189,6 +189,12 @@
           <span class="badge" id="nav-action-count" style="display:none; background:var(--danger); color:#fff; font-size:0.68rem; padding:1px 6px; border-radius:99px; min-width:18px;">0</span>
         </button>
 
+        <!-- Planning Workflow Drawer Button (Slider) -->
+        <button class="btn btn-sm btn-outline" id="btn-toggle-workflow-drawer" onclick="toggleWorkflowDrawer()" title="Standard Planning Workflow Guide" style="display:inline-flex; align-items:center; gap:0.35rem; font-weight:600; border-color:var(--card-border); color:var(--text-main);">
+          <i class="fas fa-layer-group" style="color:var(--primary);"></i>
+          <span>Workflow</span>
+        </button>
+
         <!-- Mobile App Quick Install / Instructions Button -->
         <button class="btn btn-sm btn-outline btn-mobile-app" onclick="showMobileAppInstructions()" title="📱 Mobile App Installation Guide" style="border-color:rgba(56, 189, 248, 0.4); color:#38bdf8;">
           <i class="fas fa-mobile-alt"></i>
@@ -210,41 +216,6 @@
 
     <!-- Main Container Body -->
     <main class="page-container">
-
-      <!-- Guided Planning Workflow Bar (Collapsible/Expandable) -->
-      <div id="guided-workflow-container" class="guided-workflow-bar" style="margin-bottom:1.25rem; background:var(--bg-secondary); border:1px solid var(--card-border); border-radius:12px; padding:0.65rem 1.15rem; box-shadow:var(--shadow-sm); transition:all 0.25s ease;">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.6rem; cursor:pointer; user-select:none;" onclick="toggleWorkflowBar()" title="Click to collapse or expand">
-          <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; font-weight:700; color:var(--text-main);">
-            <i class="fas fa-layer-group" style="color:var(--primary);"></i> 
-            <span>Standard Planning Workflow</span>
-            <span id="workflow-collapsed-badge" class="pill pill-safe" style="display:none; font-size:0.7rem; padding:2px 8px; margin-left:6px; font-weight:600;">
-              1. Forecast ➔ 2. Production ➔ 3. Store ➔ 4. Ledger
-            </span>
-          </div>
-          <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px; font-size:0.75rem; border-radius:6px; color:var(--text-dim); display:flex; align-items:center; gap:4px; pointer-events:none;">
-            <span id="workflow-toggle-label">Hide</span>
-            <i id="workflow-toggle-icon" class="fas fa-chevron-up"></i>
-          </button>
-        </div>
-        
-        <div id="workflow-steps-content" style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; margin-top:0.65rem; padding-top:0.65rem; border-top:1px dashed var(--card-border); transition:all 0.25s ease;">
-          <button type="button" class="btn btn-sm btn-outline" onclick="switchView('forecast')" style="font-size:0.78rem; font-weight:600; padding:4px 10px; border-radius:6px;">
-            1. 📈 Sales Forecast
-          </button>
-          <i class="fas fa-arrow-right" style="font-size:0.68rem; color:var(--text-dim);"></i>
-          <button type="button" class="btn btn-sm btn-outline" onclick="switchView('production')" style="font-size:0.78rem; font-weight:600; padding:4px 10px; border-radius:6px;">
-            2. 🏭 Production Plan (Net of FG Stock)
-          </button>
-          <i class="fas fa-arrow-right" style="font-size:0.68rem; color:var(--text-dim);"></i>
-          <button type="button" class="btn btn-sm btn-outline" onclick="switchView('store')" style="font-size:0.78rem; font-weight:600; padding:4px 10px; border-radius:6px;">
-            3. 📦 Store Requisitions (Net of RM-PM Stock)
-          </button>
-          <i class="fas fa-arrow-right" style="font-size:0.68rem; color:var(--text-dim);"></i>
-          <button type="button" class="btn btn-sm btn-outline" onclick="switchView('reports')" style="font-size:0.78rem; font-weight:600; padding:4px 10px; border-radius:6px;">
-            4. 📊 Stock Ledger & Reports
-          </button>
-        </div>
-      </div>
 
       <!-- ================= 1. DASHBOARD VIEW (HYPERLINKED CARDS) ================= -->
       <section id="view-dashboard" class="view-section active">
@@ -306,9 +277,6 @@
           </div>
         </div>
 
-        <!-- Action Center & Today's Pending Tasks (Collapsible & Filtered) -->
-        <div id="my-tasks-panel"></div>
-
         <!-- Charts Row -->
         <div class="chart-grid">
           <div class="card">
@@ -338,7 +306,7 @@
         </div>
 
         <!-- Critical Action Items & Recent Transactions -->
-        <div style="display:grid; grid-template-columns: 2fr 1fr; gap:1.25rem;">
+        <div class="dashboard-bottom-grid" style="display:grid; grid-template-columns: 2fr 1fr; gap:1.25rem;">
           <div class="card">
             <div class="card-header">
               <div class="card-title">
@@ -443,31 +411,67 @@
                 </div>
               </div>
             </div>
-            <div style="font-size:0.85rem; color:var(--text-muted);">
-              Total Cartons: <strong id="forecast-total-cartons" style="color:var(--primary); font-size:1.1rem;">0</strong>
-              &nbsp;|&nbsp; Total Units: <strong id="forecast-total-pieces" style="color:var(--success);">0</strong>
+            <div style="font-size:0.85rem; color:var(--text-muted); display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
+              <span id="forecast-total-ctn-wrap" style="padding:3px 8px; border-radius:6px; border:1px solid transparent; transition:all 0.2s;">
+                Total Cartons: <strong id="forecast-total-cartons" style="color:var(--primary); font-size:1.05rem;">0</strong>
+              </span>
+              <span style="color:var(--card-border);">|</span>
+              <span id="forecast-total-pcs-wrap" style="padding:3px 8px; border-radius:6px; border:1px solid transparent; transition:all 0.2s;">
+                Total Units: <strong id="forecast-total-pieces" style="color:var(--success); font-size:1.05rem;">0</strong>
+              </span>
             </div>
           </div>
 
-          <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-            <button class="btn btn-outline" onclick="downloadForecastBlankTemplate()">
-              <i class="fas fa-file-download"></i> Blank Template
+          <div style="display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap;">
+            <button class="btn btn-sm btn-primary" onclick="saveForecastChanges()" style="box-shadow:0 2px 8px rgba(37,99,235,0.3); font-weight:700; height:32px; padding:0 0.85rem;">
+              <i class="fas fa-save"></i> <span>Save Forecast Changes</span>
             </button>
-            <button class="btn btn-outline" onclick="openBulkForecastModal()">
-              <i class="fas fa-file-upload"></i> Bulk Upload Excel
+            <button class="btn btn-sm btn-outline" onclick="openCreateSKUModal()" title="Create New Finished Good SKU" style="height:32px; padding:0 0.75rem;">
+              <i class="fas fa-plus"></i> <span>+ New Finished Good</span>
             </button>
-            <button class="btn btn-outline" onclick="openCreateSKUModal()" title="Create New Finished Good SKU">
-              <i class="fas fa-plus"></i> New Finished Good
-            </button>
-            <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('forecast')">
-              <i class="fas fa-file-excel" style="color:var(--success);"></i> Export Forecast
-            </button>
-            <button class="btn btn-outline" onclick="openSmartPlanModal()" style="border-color:var(--cyan); color:var(--cyan);">
-              <i class="fas fa-brain"></i> Smart Suggest Plan
-            </button>
-            <button class="btn btn-primary" onclick="saveForecastChanges()">
-              <i class="fas fa-save"></i> Save Forecast Changes
-            </button>
+
+            <!-- Excel Actions Dropdown -->
+            <div style="position:relative; display:inline-block;">
+              <button type="button" class="btn btn-sm btn-outline" onclick="toggleDropdown('forecast-excel-menu', event)" style="height:32px; padding:0 0.7rem; display:inline-flex; align-items:center; gap:0.35rem;">
+                <i class="fas fa-file-excel" style="color:var(--success);"></i>
+                <span>Excel Actions</span>
+                <i class="fas fa-chevron-down" style="font-size:0.65rem; opacity:0.7;"></i>
+              </button>
+              <div class="dropdown-menu portal-action-dropdown" id="forecast-excel-menu" style="display:none; position:absolute; right:0; top:calc(100% + 4px); z-index:100; min-width:215px; border-radius:8px; padding:0.35rem 0;">
+                <a href="javascript:void(0)" onclick="downloadForecastBlankTemplate(); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-file-download" style="color:var(--primary); width:16px;"></i> Blank Forecast Template
+                </a>
+                <a href="javascript:void(0)" onclick="openBulkForecastModal(); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-file-upload" style="color:var(--cyan); width:16px;"></i> Bulk Upload Forecast (.xlsx)
+                </a>
+                <div style="border-top:1px solid var(--card-border); margin:0.25rem 0;"></div>
+                <a href="javascript:void(0)" onclick="downloadSectionExcel('forecast'); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-file-export" style="color:var(--success); width:16px;"></i> Export Forecast (.xlsx)
+                </a>
+              </div>
+            </div>
+
+            <!-- Planning Tools Dropdown -->
+            <div style="position:relative; display:inline-block;">
+              <button type="button" class="btn btn-sm btn-outline" onclick="toggleDropdown('forecast-tools-menu', event)" style="height:32px; padding:0 0.7rem; display:inline-flex; align-items:center; gap:0.35rem; border-color:var(--cyan); color:var(--cyan);">
+                <i class="fas fa-brain"></i>
+                <span>Tools & AI</span>
+                <i class="fas fa-chevron-down" style="font-size:0.65rem; opacity:0.7;"></i>
+              </button>
+              <div class="dropdown-menu portal-action-dropdown" id="forecast-tools-menu" style="display:none; position:absolute; right:0; top:calc(100% + 4px); z-index:100; min-width:220px; border-radius:8px; padding:0.35rem 0;">
+                <a href="javascript:void(0)" onclick="openSmartPlanModal(); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-brain" style="color:var(--cyan); width:16px;"></i> Smart Suggest Plan (AI)
+                </a>
+                <a href="javascript:void(0)" onclick="triggerRealignProduction(); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-bolt" style="color:#d97706; width:16px;"></i> Auto-Align Daily Plans
+                </a>
+                <div style="border-top:1px solid var(--card-border); margin:0.25rem 0;"></div>
+                <a href="javascript:void(0)" onclick="openClearDataModal('sales_forecast'); closeAllActionDropdowns();" class="dropdown-item-link admin-only" style="color:var(--danger);">
+                  <i class="fas fa-trash-alt" style="color:var(--danger); width:16px;"></i> Reset / Clear Forecast
+                </a>
+              </div>
+            </div>
+
             <div id="forecast-readonly-tag" class="pill pill-safe" style="display:none; align-items:center; gap:0.4rem; padding:0.4rem 0.85rem; font-size:0.8rem; background:rgba(59, 130, 246, 0.12); border:1px solid rgba(59, 130, 246, 0.3); color:#38bdf8;">
               <i class="fas fa-eye"></i> Read-Only View (Sales Team Only)
             </div>
@@ -475,12 +479,18 @@
         </div>
 
         <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <i class="fas fa-calendar-check" style="color:var(--primary);"></i>
-              SKU-wise Monthly Sales Forecast Entry
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+            <div>
+              <div class="card-title">
+                <i class="fas fa-calendar-check" style="color:var(--primary);"></i>
+                SKU-wise Monthly Sales Forecast Entry
+              </div>
+              <span id="forecast-card-subtitle" style="font-size:0.75rem; color:var(--text-dim);">Edit carton values and click "Save Forecast Changes"</span>
             </div>
-            <span style="font-size:0.75rem; color:var(--text-dim);">Edit carton values and click "Save Forecast Changes"</span>
+            <div class="search-box" style="min-width:180px; max-width:240px;">
+              <i class="fas fa-search search-icon"></i>
+              <input type="text" id="forecast-search-input" placeholder="Quick search SKU / name..." oninput="filterForecastTable(this.value)" style="height:28px; font-size:0.75rem;">
+            </div>
           </div>
           <div class="table-responsive">
             <table class="data-table">
@@ -490,11 +500,11 @@
                   <th>SKU Code</th>
                   <th>Finished Good / Description</th>
                   <th>Category</th>
-                  <th style="text-align:right;">Original (Ctn)</th>
-                  <th style="text-align:right;">Active Forecast (Ctn)</th>
+                  <th style="text-align:right;" id="th-forecast-original">Original (Ctn)</th>
+                  <th style="text-align:right;" id="th-forecast-active">Active Forecast (Ctn)</th>
                   <th style="text-align:center;">Rev #</th>
-                  <th style="text-align:center;">Weekly Breakdown (W1-W4)</th>
-                  <th style="text-align:right;">Total Output Units</th>
+                  <th style="text-align:center;" id="th-forecast-weekly">Weekly Breakdown (W1-W4)</th>
+                  <th style="text-align:right;" id="th-forecast-output">Total Output Units</th>
                   <th style="text-align:center;">BOM & History</th>
                 </tr>
               </thead>
@@ -584,37 +594,62 @@
               </div>
             </div>
           </div>
-          <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-            <button class="btn btn-outline" onclick="downloadProductionTemplate()">
-              <i class="fas fa-file-download"></i> Blank Template
+          <div style="display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap;">
+            <button class="btn btn-sm btn-primary" id="btn-save-production-plans" onclick="saveProductionPlanChanges()" style="box-shadow:0 2px 8px rgba(37,99,235,0.3); font-weight:700; height:32px; padding:0 0.85rem;">
+              <i class="fas fa-save"></i> <span>Save Plans</span>
             </button>
-            <button class="btn btn-outline" onclick="openBulkProductionModal()">
-              <i class="fas fa-file-upload"></i> Bulk Upload Plans
+            <button class="btn btn-sm btn-success" onclick="openCreatePlanModal()" style="height:32px; padding:0 0.8rem; font-weight:600;">
+              <i class="fas fa-plus"></i> <span>+ Create Plan</span>
             </button>
-            <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('production')">
-              <i class="fas fa-file-excel" style="color:var(--success);"></i> Export Plans
-            </button>
-            <button class="btn btn-outline" onclick="openFloorStockModal()" style="border-color:var(--cyan); color:var(--cyan);" title="Manage Material Floor Stock Issued to Production">
-              <i class="fas fa-industry"></i> Floor Stock (WIP)
-            </button>
-            <button class="btn btn-outline" onclick="openOutputImportModal()" style="border-color:var(--success); color:var(--success);" title="Import Actual Output from Poloxy Report">
-              <i class="fas fa-file-import"></i> Import Actual Output (Poloxy)
-            </button>
-            <button class="btn btn-outline" onclick="openPoloxySyncModal()" title="Pull FG opening stock from Poloxy ERP">
-              <i class="fas fa-sync-alt" style="color:var(--primary);"></i> Pull Poloxy Stock
-            </button>
-            <button class="btn btn-outline" onclick="triggerRealignProduction()" style="border-color:#f59e0b; color:#d97706;" title="Auto-align future daily plans with revised forecast">
-              <i class="fas fa-bolt"></i> Auto-Align Plans
-            </button>
-            <button class="btn btn-primary" id="btn-save-production-plans" onclick="saveProductionPlanChanges()" style="box-shadow:0 2px 8px rgba(37,99,235,0.3); font-weight:700;">
-              <i class="fas fa-save"></i> Save Plans
-            </button>
-            <button class="btn btn-primary" onclick="openCreatePlanModal()">
-              <i class="fas fa-plus"></i> Create Plan
-            </button>
-            <button class="btn btn-outline admin-only" onclick="openClearDataModal('production')" style="border-color:var(--danger); color:var(--danger); font-weight:700;" title="Super Admin Production Data Cleanup Tool">
-              <i class="fas fa-trash-alt"></i> Cleanup Data
-            </button>
+
+            <!-- Excel Actions Dropdown -->
+            <div style="position:relative; display:inline-block;">
+              <button type="button" class="btn btn-sm btn-outline" onclick="toggleDropdown('prod-excel-menu', event)" style="height:32px; padding:0 0.7rem; display:inline-flex; align-items:center; gap:0.35rem;">
+                <i class="fas fa-file-excel" style="color:var(--success);"></i>
+                <span>Excel Actions</span>
+                <i class="fas fa-chevron-down" style="font-size:0.65rem; opacity:0.7;"></i>
+              </button>
+              <div class="dropdown-menu portal-action-dropdown" id="prod-excel-menu" style="display:none; position:absolute; right:0; top:calc(100% + 4px); z-index:100; min-width:220px; border-radius:8px; padding:0.35rem 0;">
+                <a href="javascript:void(0)" onclick="downloadProductionTemplate(); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-file-download" style="color:var(--primary); width:16px;"></i> Blank Plan Template (.xlsx)
+                </a>
+                <a href="javascript:void(0)" onclick="openBulkProductionModal(); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-file-upload" style="color:var(--cyan); width:16px;"></i> Bulk Upload Plans (.xlsx)
+                </a>
+                <a href="javascript:void(0)" onclick="openOutputImportModal(); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-file-import" style="color:var(--success); width:16px;"></i> Import Poloxy Output File
+                </a>
+                <div style="border-top:1px solid var(--card-border); margin:0.25rem 0;"></div>
+                <a href="javascript:void(0)" onclick="downloadSectionExcel('production'); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-file-export" style="color:var(--success); width:16px;"></i> Export Plans (.xlsx)
+                </a>
+              </div>
+            </div>
+
+            <!-- ERP & Tools Dropdown -->
+            <div style="position:relative; display:inline-block;">
+              <button type="button" class="btn btn-sm btn-outline" onclick="toggleDropdown('prod-tools-menu', event)" style="height:32px; padding:0 0.7rem; display:inline-flex; align-items:center; gap:0.35rem;">
+                <i class="fas fa-cogs"></i>
+                <span>ERP & Tools</span>
+                <i class="fas fa-chevron-down" style="font-size:0.65rem; opacity:0.7;"></i>
+              </button>
+              <div class="dropdown-menu portal-action-dropdown" id="prod-tools-menu" style="display:none; position:absolute; right:0; top:calc(100% + 4px); z-index:100; min-width:230px; border-radius:8px; padding:0.35rem 0;">
+                <a href="javascript:void(0)" onclick="openPoloxySyncModal(); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-sync-alt" style="color:var(--primary); width:16px;"></i> Pull Poloxy Live Stock & Output
+                </a>
+                <a href="javascript:void(0)" onclick="openFloorStockModal(); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-industry" style="color:var(--cyan); width:16px;"></i> Floor Stock (WIP) Register
+                </a>
+                <a href="javascript:void(0)" onclick="triggerRealignProduction(); closeAllActionDropdowns();" class="dropdown-item-link">
+                  <i class="fas fa-bolt" style="color:#d97706; width:16px;"></i> Auto-Align Plans with Forecast
+                </a>
+                <div style="border-top:1px solid var(--card-border); margin:0.25rem 0;"></div>
+                <a href="javascript:void(0)" onclick="openClearDataModal('production'); closeAllActionDropdowns();" class="dropdown-item-link admin-only" style="color:var(--danger);">
+                  <i class="fas fa-trash-alt" style="color:var(--danger); width:16px;"></i> Cleanup Production Plans
+                </a>
+              </div>
+            </div>
+
             <div id="production-readonly-tag" class="pill pill-safe" style="display:none; align-items:center; gap:0.4rem; padding:0.4rem 0.85rem; font-size:0.8rem; background:rgba(59, 130, 246, 0.12); border:1px solid rgba(59, 130, 246, 0.3); color:#38bdf8;">
               <i class="fas fa-eye"></i> Read-Only View (Production Team Only)
             </div>
@@ -622,10 +657,17 @@
         </div>
 
         <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <i class="fas fa-tasks" style="color:var(--primary);"></i>
-              Active Production Plans
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+            <div>
+              <div class="card-title">
+                <i class="fas fa-tasks" style="color:var(--primary);"></i>
+                Active Production Plans
+              </div>
+              <span style="font-size:0.75rem; color:var(--text-dim);">Plan daily factory output against stock and track actual output</span>
+            </div>
+            <div class="search-box" style="min-width:180px; max-width:240px;">
+              <i class="fas fa-search search-icon"></i>
+              <input type="text" id="production-search-input" placeholder="Quick search SKU / plan..." oninput="filterProductionTable(this.value)" style="height:28px; font-size:0.75rem;">
             </div>
           </div>
           <div class="table-responsive">
@@ -668,36 +710,19 @@
 
       <!-- ================= 4. STORE & INVENTORY VIEW (SEPARATE TABS) ================= -->
       <section id="view-store" class="view-section">
-        <!-- Collapsed Store Bar Pill (shown when user clicks Hide / Collapse) -->
-        <div id="store-header-collapsed-pill" style="display:none; justify-content:space-between; align-items:center; background:var(--bg-tertiary); border:1px solid var(--card-border); border-radius:10px; padding:0.4rem 0.85rem; margin-bottom:0.75rem;">
-          <div style="font-size:0.82rem; font-weight:700; color:var(--text-main); display:flex; align-items:center; gap:0.45rem;">
-            <i class="fas fa-warehouse text-primary"></i>
-            <span>Store Navigation Tabs (Hidden)</span>
-            <span class="badge" id="store-current-tab-badge" style="background:var(--primary); color:#fff; font-size:0.68rem;">Inventory</span>
-          </div>
-          <div style="display:flex; gap:0.4rem;">
-            <button type="button" class="btn btn-xs btn-primary" onclick="openStoreDrawer()" style="font-weight:700;">
-              <i class="fas fa-sliders-h"></i> Tabs Drawer
-            </button>
-            <button type="button" class="btn btn-xs btn-outline" onclick="toggleStoreHeaderCollapse()" style="font-weight:700;">
-              <i class="fas fa-expand-alt"></i> Expand Tabs
-            </button>
-          </div>
-        </div>
-
-        <!-- Store Navigation Header with Right-Aligned Slider Tab Bar & Side Drawer Toggle -->
-        <div class="store-header-bar" id="store-header-bar-main">
-          <div class="store-header-info">
-            <div class="store-header-icon">
+        <!-- Store Navigation Header with Segmented Tab Slider & Tabs Drawer -->
+        <div class="store-header-bar" id="store-header-bar-main" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.6rem; padding:0.5rem 0.85rem; margin-bottom:0.65rem; border-radius:12px; background:var(--card-bg); border:1px solid var(--card-border);">
+          <div class="store-header-info" style="display:flex; align-items:center; gap:0.6rem;">
+            <div class="store-header-icon" style="width:34px; height:34px; font-size:1rem; border-radius:8px; display:flex; align-items:center; justify-content:center; background:rgba(37,99,235,0.12); color:var(--primary);">
               <i class="fas fa-warehouse"></i>
             </div>
             <div>
-              <div class="store-header-title">Store & Inventory Control</div>
-              <div class="store-header-subtitle">Factory Godown, Requisitions, Inward & Stock Audit</div>
+              <div class="store-header-title" style="font-size:0.95rem; font-weight:700;">Store & Inventory Control</div>
+              <div class="store-header-subtitle" style="font-size:0.72rem; color:var(--text-dim);">Factory Godown, Requisitions, Inward & Stock Audit</div>
             </div>
           </div>
 
-          <!-- Modern Right-Aligned Segmented Tab Slider & Action Tools -->
+          <!-- Segmented Tab Slider -->
           <div style="display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap;">
             <div class="store-tab-slider-container">
               <button class="store-tab-slider-arrow left" onclick="slideStoreTabs('left')" title="Scroll Left" type="button">
@@ -725,66 +750,91 @@
                 <i class="fas fa-chevron-right"></i>
               </button>
             </div>
-
-            <!-- Right-Side Slider Drawer Trigger Button -->
-            <button type="button" class="btn btn-sm btn-primary" onclick="openStoreDrawer()" style="font-weight:700; box-shadow:0 2px 8px rgba(37,99,235,0.3); display:inline-flex; align-items:center; gap:0.4rem;" title="Open Store Navigation Drawer">
-              <i class="fas fa-sliders-h"></i>
-              <span>Tabs Drawer</span>
-            </button>
-
-            <!-- Collapse / Hide Toggle Button -->
-            <button type="button" class="btn btn-sm btn-outline" id="btn-toggle-store-header" onclick="toggleStoreHeaderCollapse()" title="Toggle Tab Bar Collapse/Expand" style="padding:0.4rem 0.65rem; font-size:0.78rem;">
-              <i class="fas fa-compress-alt"></i> <span>Hide</span>
-            </button>
           </div>
         </div>
 
         <!-- SUB-TAB 1: STORE INVENTORY & STOCK -->
         <div id="store-tab-inventory">
-          <div class="action-bar">
-            <div class="filter-tabs" id="store-tabs">
-              <button class="tab-btn active" onclick="setStoreFilter('all', this)">All Items</button>
-              <button class="tab-btn" onclick="setStoreFilter('RM', this)">Raw Materials (RM)</button>
-              <button class="tab-btn" onclick="setStoreFilter('PM', this)">Packaging Materials (PM)</button>
-              <button class="tab-btn" onclick="setStoreFilter('critical', this)">🔴 Critical</button>
-              <button class="tab-btn" onclick="setStoreFilter('low', this)">🟡 Low Stock</button>
-              <button class="tab-btn" onclick="setStoreFilter('safe', this)">🟢 Safe Buffer</button>
-              <button class="tab-btn" onclick="setStoreFilter('fast', this)">⚡ Fast</button>
-              <button class="tab-btn" onclick="setStoreFilter('slow', this)">🐢 Slow</button>
-              <button class="tab-btn" onclick="setStoreFilter('non_moving', this)">💤 Non-Moving</button>
+          <div class="action-bar" style="margin-bottom:0.6rem; padding:0.45rem 0.75rem; background:var(--bg-secondary); border:1px solid var(--card-border); border-radius:10px; display:flex; flex-direction:column; gap:0.45rem;">
+            <!-- Row 1: Grouped Filter Segments (Type, Health, Movement) -->
+            <div class="filter-tabs" id="store-tabs" style="display:flex; flex-wrap:wrap; align-items:center; gap:0.35rem;">
+              <span style="font-size:0.7rem; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Type:</span>
+              <button class="tab-btn active" onclick="setStoreFilter('all', this)" style="padding:0.2rem 0.5rem; font-size:0.75rem;">All</button>
+              <button class="tab-btn" onclick="setStoreFilter('RM', this)" style="padding:0.2rem 0.5rem; font-size:0.75rem;">RM</button>
+              <button class="tab-btn" onclick="setStoreFilter('PM', this)" style="padding:0.2rem 0.5rem; font-size:0.75rem;">PM</button>
+              
+              <span style="border-left:1px solid var(--card-border); height:16px; margin:0 4px;"></span>
+              <span style="font-size:0.7rem; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Health:</span>
+              <button class="tab-btn" onclick="setStoreFilter('critical', this)" style="padding:0.2rem 0.5rem; font-size:0.75rem; color:var(--danger);">🔴 Critical</button>
+              <button class="tab-btn" onclick="setStoreFilter('low', this)" style="padding:0.2rem 0.5rem; font-size:0.75rem; color:var(--warning);">🟡 Low</button>
+              <button class="tab-btn" onclick="setStoreFilter('safe', this)" style="padding:0.2rem 0.5rem; font-size:0.75rem; color:var(--success);">🟢 Safe</button>
+              
+              <span style="border-left:1px solid var(--card-border); height:16px; margin:0 4px;"></span>
+              <span style="font-size:0.7rem; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">FSN:</span>
+              <button class="tab-btn" onclick="setStoreFilter('fast', this)" style="padding:0.2rem 0.5rem; font-size:0.75rem;">⚡ Fast</button>
+              <button class="tab-btn" onclick="setStoreFilter('slow', this)" style="padding:0.2rem 0.5rem; font-size:0.75rem;">🐢 Slow</button>
+              <button class="tab-btn" onclick="setStoreFilter('non_moving', this)" style="padding:0.2rem 0.5rem; font-size:0.75rem;">💤 Non-Moving</button>
             </div>
 
-            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
-              <div class="search-box">
+            <!-- Row 2: Search Box + Action Buttons aligned in single compact row -->
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:0.45rem; flex-wrap:wrap;">
+              <div class="search-box" style="min-width:200px; max-width:260px;">
                 <i class="fas fa-search search-icon"></i>
-                <input type="text" id="store-search-input" placeholder="Search RM / PM / Supplier..." oninput="loadStoreStock()">
+                <input type="text" id="store-search-input" placeholder="Search RM / PM / Supplier..." oninput="loadStoreStock()" style="height:30px; font-size:0.78rem;">
               </div>
-              <button class="btn btn-sm" id="btn-sync-poloxy-rm-pm" onclick="syncMaterialsFromPoloxy()" style="background:#2563eb; color:#fff; font-weight:700; border:none; box-shadow:0 2px 8px rgba(37,99,235,0.35);" title="Pull live RM and PM stock from Poloxy ERP Factory Godown">
-                <i class="fas fa-cloud-download-alt"></i> <span>Sync Poloxy RM-PM Stock</span>
-              </button>
-              <button class="btn btn-sm btn-success" onclick="openCreateMRRModal()">
-                <i class="fas fa-plus"></i> + MRR Stock Inward
-              </button>
-              <button class="btn btn-sm btn-outline" onclick="openCreateWastageModal()">
-                <i class="fas fa-dumpster"></i> + Log Wastage
-              </button>
-              <button class="btn btn-primary" id="btn-save-store-stock" onclick="saveStoreStockChanges()" style="box-shadow:0 2px 8px rgba(37,99,235,0.3); font-weight:700;">
-                <i class="fas fa-save"></i> Save Stock
-              </button>
-              <button class="btn btn-sm btn-outline" onclick="downloadSectionExcel('store')">
-                <i class="fas fa-file-excel" style="color:var(--success);"></i> Export Store Excel
-              </button>
-              <button class="btn btn-sm btn-outline" onclick="openFloorStockModal()" style="border-color:var(--cyan); color:var(--cyan);" title="View & Record Production Floor Stock (RM/PM)">
-                <i class="fas fa-industry"></i> Floor Stock (WIP)
-              </button>
-              <button class="btn btn-sm btn-danger" onclick="triggerAutoReplenishment()">
-                <i class="fas fa-magic"></i> Auto Replenish
-              </button>
-              <button class="btn btn-sm btn-outline admin-only" onclick="openClearDataModal('store_stock')" style="border-color:var(--danger); color:var(--danger); font-weight:700;" title="Super Admin Store & Stock Cleanup Tool">
-                <i class="fas fa-trash-alt"></i> Reset Stock Data
-              </button>
-              <div id="store-readonly-tag" class="pill pill-safe" style="display:none; align-items:center; gap:0.4rem; padding:0.4rem 0.85rem; font-size:0.8rem; background:rgba(59, 130, 246, 0.12); border:1px solid rgba(59, 130, 246, 0.3); color:#38bdf8;">
-                <i class="fas fa-eye"></i> Read-Only View (Store Team Only)
+
+              <div style="display:flex; align-items:center; gap:0.35rem; flex-wrap:wrap;">
+                <button class="btn btn-sm btn-primary" id="btn-save-store-stock" onclick="saveStoreStockChanges()" style="box-shadow:0 2px 8px rgba(37,99,235,0.3); font-weight:700; height:30px; padding:0 0.75rem; font-size:0.78rem;">
+                  <i class="fas fa-save"></i> <span>Save Stock</span>
+                </button>
+                <button class="btn btn-sm btn-success" onclick="openCreateMRRModal()" style="height:30px; padding:0 0.65rem; font-size:0.78rem;" title="Record Material Receipt Note">
+                  <i class="fas fa-plus"></i> <span>+ MRR Inward</span>
+                </button>
+
+                <!-- Store Tools Dropdown -->
+                <div style="position:relative; display:inline-block;">
+                  <button type="button" class="btn btn-sm btn-outline" onclick="toggleDropdown('store-tools-menu', event)" style="height:30px; padding:0 0.65rem; font-size:0.78rem; display:inline-flex; align-items:center; gap:0.3rem;">
+                    <i class="fas fa-tools"></i>
+                    <span>Store Tools</span>
+                    <i class="fas fa-chevron-down" style="font-size:0.62rem; opacity:0.7;"></i>
+                  </button>
+                  <div class="dropdown-menu portal-action-dropdown" id="store-tools-menu" style="display:none; position:absolute; right:0; top:calc(100% + 4px); z-index:100; min-width:220px; border-radius:8px; padding:0.35rem 0;">
+                    <a href="javascript:void(0)" onclick="openCreateWastageModal(); closeAllActionDropdowns();" class="dropdown-item-link">
+                      <i class="fas fa-dumpster" style="color:#ef4444; width:16px;"></i> + Log Wastage & Scrap
+                    </a>
+                    <a href="javascript:void(0)" onclick="openCreateMaterialModal(); closeAllActionDropdowns();" class="dropdown-item-link">
+                      <i class="fas fa-cubes" style="color:var(--success); width:16px;"></i> + New RM / PM Item
+                    </a>
+                    <a href="javascript:void(0)" onclick="openFloorStockModal(); closeAllActionDropdowns();" class="dropdown-item-link">
+                      <i class="fas fa-industry" style="color:var(--cyan); width:16px;"></i> Floor Stock (WIP) Register
+                    </a>
+                    <div style="border-top:1px solid var(--card-border); margin:0.25rem 0;"></div>
+                    <a href="javascript:void(0)" onclick="syncMaterialsFromPoloxy(); closeAllActionDropdowns();" class="dropdown-item-link" id="btn-sync-poloxy-rm-pm">
+                      <i class="fas fa-cloud-download-alt" style="color:var(--primary); width:16px;"></i> Sync Poloxy Live Stock
+                    </a>
+                    <a href="javascript:void(0)" onclick="triggerAutoReplenishment(); closeAllActionDropdowns();" class="dropdown-item-link">
+                      <i class="fas fa-magic" style="color:var(--warning); width:16px;"></i> Auto Replenish Buffer
+                    </a>
+                    <a href="javascript:void(0)" onclick="downloadSectionExcel('store'); closeAllActionDropdowns();" class="dropdown-item-link">
+                      <i class="fas fa-file-excel" style="color:var(--success); width:16px;"></i> Export Store Excel (.xlsx)
+                    </a>
+                    <div style="border-top:1px solid var(--card-border); margin:0.25rem 0;"></div>
+                    <a href="javascript:void(0)" onclick="downloadMRRTemplate(); closeAllActionDropdowns();" class="dropdown-item-link">
+                      <i class="fas fa-download" style="color:var(--primary); width:16px;"></i> Download MRR Template
+                    </a>
+                    <a href="javascript:void(0)" onclick="openBulkMRRModal(); closeAllActionDropdowns();" class="dropdown-item-link">
+                      <i class="fas fa-upload" style="color:var(--cyan); width:16px;"></i> Bulk Upload MRR (.xlsx)
+                    </a>
+                    <div style="border-top:1px solid var(--card-border); margin:0.25rem 0;"></div>
+                    <a href="javascript:void(0)" onclick="openClearDataModal('store_stock'); closeAllActionDropdowns();" class="dropdown-item-link admin-only" style="color:var(--danger);">
+                      <i class="fas fa-trash-alt" style="color:var(--danger); width:16px;"></i> Reset Stock Data
+                    </a>
+                  </div>
+                </div>
+
+                <div id="store-readonly-tag" class="pill pill-safe" style="display:none; align-items:center; gap:0.35rem; padding:0.25rem 0.6rem; font-size:0.75rem; background:rgba(59, 130, 246, 0.12); border:1px solid rgba(59, 130, 246, 0.3); color:#38bdf8;">
+                  <i class="fas fa-eye"></i> Read-Only View
+                </div>
               </div>
             </div>
           </div>
@@ -966,20 +1016,20 @@
 
       <!-- ================= 5. SUPPLY CHAIN & PROCUREMENT VIEW ================= -->
       <section id="view-procurement" class="view-section">
-        <div class="action-bar">
-          <div>
-            <h2 style="font-size:1.1rem; font-weight:700;">Purchase Requisitions & Supply Chain Orders</h2>
-            <p style="font-size:0.75rem; color:var(--text-muted);">Manage purchase orders for Raw & Packaging Materials and process Goods Receipt Notes (GRN).</p>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <i class="fas fa-truck-loading" style="color:var(--primary);"></i>
-              Purchase Order Tracking & GRN Receiving
+        <div class="card" style="margin-top:0.25rem;">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; padding:0.65rem 1rem;">
+            <div>
+              <div class="card-title" style="display:flex; align-items:center; gap:0.5rem; font-size:0.95rem; margin-bottom:2px;">
+                <i class="fas fa-truck-loading" style="color:var(--primary);"></i>
+                <span>Purchase Order Tracking & GRN Receiving</span>
+              </div>
+              <div style="font-size:0.75rem; color:var(--text-dim);">Manage POs for Raw & Packaging Materials; receiving GRN automatically updates Store inventory</div>
             </div>
-            <span style="font-size:0.75rem; color:var(--text-dim);">Receiving GRN automatically updates Store inventory</span>
+            <div style="display:flex; align-items:center; gap:0.4rem;">
+              <button type="button" class="btn btn-sm btn-outline" onclick="loadProcurementView()" title="Refresh PO List" style="height:30px; font-size:0.75rem;">
+                <i class="fas fa-sync-alt"></i> Refresh
+              </button>
+            </div>
           </div>
           <div class="table-responsive">
             <table class="data-table">
@@ -1019,8 +1069,8 @@
 
       <!-- ================= 6. SUPER ADMIN: MASTER DATA, USERS & ERP ================= -->
       <section id="view-master_bom" class="view-section">
-        <div class="action-bar">
-          <div class="filter-tabs" id="admin-tabs">
+        <div class="action-bar" style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.75rem; flex-wrap:wrap;">
+          <div class="filter-tabs" id="admin-tabs" style="display:flex; gap:0.25rem; flex-wrap:wrap;">
             <button class="tab-btn active" data-tab="skus" onclick="setAdminTab('skus')">Finished Goods (SKUs)</button>
             <button class="tab-btn" data-tab="materials" onclick="setAdminTab('materials')">Materials Master (RM & PM)</button>
             <button class="tab-btn" data-tab="bom" onclick="setAdminTab('bom')">BOM Formulation Builder</button>
@@ -1028,13 +1078,21 @@
             <button class="tab-btn" data-tab="cloud" onclick="setAdminTab('cloud')"><i class="fas fa-cloud"></i> Cloud DB (Turso)</button>
           </div>
 
-          <div style="display:flex; gap:0.5rem;">
-            <button class="btn btn-outline" onclick="openCreateSKUModal()">
-              <i class="fas fa-plus"></i> New Finished Good
+          <!-- Compact '+ New Item' Dropdown next to Cloud DB / Right-aligned -->
+          <div class="dropdown" style="position:relative; display:inline-block;">
+            <button type="button" class="btn btn-sm btn-primary" id="btn-master-add-dropdown" onclick="toggleMasterAddDropdown(event)" style="font-weight:700; display:inline-flex; align-items:center; gap:0.4rem; padding:0.35rem 0.8rem; border-radius:8px; height:32px;">
+              <i class="fas fa-plus-circle"></i>
+              <span>+ New Item</span>
+              <i class="fas fa-chevron-down" style="font-size:0.65rem; margin-left:2px;"></i>
             </button>
-            <button class="btn btn-primary" onclick="openCreateMaterialModal()">
-              <i class="fas fa-plus"></i> New RM / PM Item
-            </button>
+            <div class="dropdown-menu" id="master-add-dropdown-menu" style="display:none; position:absolute; right:0; top:calc(100% + 4px); background:var(--bg-card); border:1px solid var(--card-border); border-radius:8px; box-shadow:var(--shadow-md); z-index:100; min-width:205px; overflow:hidden;">
+              <a href="javascript:void(0)" onclick="openCreateSKUModal(); closeMasterAddDropdown();" style="display:flex; align-items:center; gap:8px; padding:0.6rem 0.9rem; color:var(--text-main); font-size:0.82rem; text-decoration:none;" onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background='transparent'">
+                <i class="fas fa-boxes" style="color:var(--primary); width:16px;"></i> New Finished Good (SKU)
+              </a>
+              <a href="javascript:void(0)" onclick="openCreateMaterialModal(); closeMasterAddDropdown();" style="display:flex; align-items:center; gap:8px; padding:0.6rem 0.9rem; color:var(--text-main); font-size:0.82rem; text-decoration:none; border-top:1px solid var(--card-border);" onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background='transparent'">
+                <i class="fas fa-cubes" style="color:var(--success); width:16px;"></i> New RM / PM Item
+              </a>
+            </div>
           </div>
         </div>
 
@@ -1042,7 +1100,7 @@
         <div id="admin-tab-skus" class="admin-tab-content">
           <div class="card">
             <div class="card-header">
-              <div class="card-title">Finished Goods Master & Carton Conversion Setup</div>
+              <div class="card-title" id="admin-sku-card-title">Finished Goods Master & Carton Conversion Setup</div>
             </div>
             <div class="table-responsive">
               <table class="data-table">
@@ -1069,7 +1127,7 @@
         <div id="admin-tab-materials" class="admin-tab-content" style="display:none;">
           <div class="card">
             <div class="card-header">
-              <div class="card-title">Raw & Packaging Materials Master</div>
+              <div class="card-title" id="admin-mat-card-title">Raw & Packaging Materials Master</div>
             </div>
             <div class="table-responsive">
               <table class="data-table">
@@ -1143,8 +1201,8 @@
                 </div>
               </div>
               <div class="form-group">
-                <label class="form-label">05. Dry Foods Work Center Name:</label>
-                <input type="text" class="form-control" id="erp-cfg-dry-wc" value="Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa)">
+                <label class="form-label">05. Dry Foods Work Center Name(s):</label>
+                <input type="text" class="form-control" id="erp-cfg-dry-wc" value="Dry Food Packing-1(Sweets Pastry & Savory); Dry Food Packing Export; DF Packing Corporate; Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa)">
               </div>
               <div class="form-group">
                 <label class="form-label">02. Frozen Foods Work Center Name:</label>
@@ -1231,22 +1289,22 @@
         <!-- ================= SUB-TAB 1: FORECAST VS PRODUCTION REPORT ================= -->
         <div id="report-subtab-forecast-prod">
           <!-- Compact 1-Row Inline Filter Toolbar (No Wasted Space) -->
-          <div class="card" style="margin-bottom:0.75rem; padding:0.5rem 0.85rem; background:var(--bg-secondary); border:1px solid var(--border-color);">
-            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem;">
-              <!-- Left: Date Filter Mode Buttons -->
+          <div class="card" style="margin-bottom:0.5rem; padding:0.35rem 0.75rem; background:var(--bg-secondary); border:1px solid var(--border-color);">
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.4rem;">
+              <!-- Left: Date Filter Mode Dropdown -->
               <div style="display:flex; align-items:center; gap:0.4rem;">
-                <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">
+                <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; display:inline-flex; align-items:center; gap:3px;">
                   <i class="fas fa-filter" style="color:var(--primary);"></i> Mode:
                 </span>
-                <div class="date-dropdown-mode-tabs" style="display:flex; gap:0.2rem;">
-                  <button type="button" class="date-mode-btn active" id="report-mode-month-btn" onclick="setReportDateFilterMode('month')" style="padding:0.25rem 0.6rem; font-size:0.75rem;">Full Month</button>
-                  <button type="button" class="date-mode-btn" id="report-mode-single-btn" onclick="setReportDateFilterMode('single')" style="padding:0.25rem 0.6rem; font-size:0.75rem;">Single Date</button>
-                  <button type="button" class="date-mode-btn" id="report-mode-range-btn" onclick="setReportDateFilterMode('range')" style="padding:0.25rem 0.6rem; font-size:0.75rem;">Date Range</button>
-                </div>
+                <select class="form-control form-control-sm" id="report-mode-select" onchange="setReportDateFilterMode(this.value)" style="min-width:120px; height:30px; font-size:0.78rem; font-weight:600;">
+                  <option value="month" selected>📅 Full Month</option>
+                  <option value="single">📆 Single Date</option>
+                  <option value="range">🗓️ Date Range</option>
+                </select>
               </div>
 
               <!-- Right: Inline Inputs + Apply -->
-              <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
+              <div style="display:flex; align-items:center; gap:0.35rem; flex-wrap:wrap;">
                 <!-- Month Selector -->
                 <div id="report-filter-month-container" style="display:flex; align-items:center; gap:0.3rem;">
                   <span style="font-size:0.75rem; font-weight:600; color:var(--text-muted);">Month:</span>
@@ -2024,29 +2082,29 @@
 
             <!-- 3 Clean Radio Option Cards -->
             <div style="display:flex; flex-direction:column; gap:0.4rem;">
-              <!-- Option 1: Actual Production Output (Recommended - Ultra Fast 3s) -->
-              <div class="sync-option-card active" id="card-sync-output" onclick="setSyncAction('actual_output')" style="border:2px solid var(--primary); background:rgba(59,130,246,0.06); border-radius:8px; padding:0.55rem 0.8rem; cursor:pointer; display:flex; align-items:flex-start; gap:0.6rem; transition:all 0.15s;">
-                <input type="radio" name="sync_action_radio" id="radio-sync-output" value="actual_output" checked style="margin-top:3px; accent-color:var(--primary);">
+              <!-- Option 1: Actual Production Output -->
+              <div class="sync-option-card" id="card-sync-output" onclick="setSyncAction('actual_output')" style="border:1px solid var(--border-color); background:var(--card-bg); border-radius:8px; padding:0.5rem 0.8rem; cursor:pointer; display:flex; align-items:flex-start; gap:0.6rem; transition:all 0.15s;">
+                <input type="radio" name="sync_action_radio" id="radio-sync-output" value="actual_output" style="margin-top:3px; accent-color:var(--primary);">
                 <div style="flex:1;">
-                  <div style="font-size:0.84rem; font-weight:700; color:var(--text-main); display:flex; align-items:center; gap:6px;">
-                    <span>🏭 Actual Production Output (Live Workcenter Output)</span>
-                    <span class="badge" style="background:#10b981; color:#fff; font-size:0.66rem; padding:1px 5px; border-radius:3px;">Recommended</span>
+                  <div style="font-size:0.83rem; font-weight:700; color:var(--text-main);">
+                    🏭 Actual Production Output Only (Live Workcenter Output)
                   </div>
-                  <div style="font-size:0.73rem; color:var(--text-muted); margin-top:2px; line-height:1.3;">
+                  <div style="font-size:0.72rem; color:var(--text-muted); margin-top:1px;">
                     Pulls actual finished cartons produced from factory work centers (Pound Cake, Milk Bread, Sandwich Bread, etc.).
                   </div>
                 </div>
               </div>
 
-              <!-- Option 2: Full Sync: Output + Opening Stock -->
-              <div class="sync-option-card" id="card-sync-both" onclick="setSyncAction('both')" style="border:1px solid var(--border-color); background:var(--card-bg); border-radius:8px; padding:0.5rem 0.8rem; cursor:pointer; display:flex; align-items:flex-start; gap:0.6rem; transition:all 0.15s;">
-                <input type="radio" name="sync_action_radio" id="radio-sync-both" value="both" style="margin-top:3px; accent-color:var(--primary);">
+              <!-- Option 2: Full Sync: Output + Opening Stock (Recommended) -->
+              <div class="sync-option-card active" id="card-sync-both" onclick="setSyncAction('both')" style="border:2px solid var(--primary); background:rgba(59,130,246,0.06); border-radius:8px; padding:0.55rem 0.8rem; cursor:pointer; display:flex; align-items:flex-start; gap:0.6rem; transition:all 0.15s;">
+                <input type="radio" name="sync_action_radio" id="radio-sync-both" value="both" checked style="margin-top:3px; accent-color:var(--primary);">
                 <div style="flex:1;">
-                  <div style="font-size:0.83rem; font-weight:700; color:var(--text-main);">
-                    🌟 Full Sync: Actual Output + Opening Stock
+                  <div style="font-size:0.84rem; font-weight:700; color:var(--text-main); display:flex; align-items:center; gap:6px;">
+                    <span>🌟 Full Sync: Actual Output + Opening Stock</span>
+                    <span class="badge" style="background:#10b981; color:#fff; font-size:0.66rem; padding:1px 5px; border-radius:3px;">Recommended</span>
                   </div>
-                  <div style="font-size:0.72rem; color:var(--text-muted); margin-top:1px;">
-                    Pulls actual production output and godown opening balance together.
+                  <div style="font-size:0.73rem; color:var(--text-muted); margin-top:2px; line-height:1.3;">
+                    Pulls actual production output and godown opening balance together (Rule 8 & 9).
                   </div>
                 </div>
               </div>
@@ -2290,6 +2348,75 @@
     </div>
   </div>
 
+  <!-- Modal: Edit Finished Good (SKU) -->
+  <div class="modal-backdrop" id="modal-edit-sku">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-edit" style="color:var(--primary);"></i> Edit Finished Good (SKU)</div>
+        <button class="modal-close" onclick="hideModal('modal-edit-sku')">&times;</button>
+      </div>
+      <form id="form-edit-sku" onsubmit="event.preventDefault(); submitEditSKU();">
+        <input type="hidden" id="edit-sku-id">
+        <div class="modal-body">
+          <div style="display:grid; grid-template-columns: 1fr 2fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">SKU Code:</label>
+              <input type="text" class="form-control" id="edit-sku-code" readonly style="background:var(--bg-tertiary); font-weight:700;">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Product / Finished Good Name *:</label>
+              <input type="text" class="form-control" id="edit-sku-name" required placeholder="e.g. Chicken Nuggets 250gm">
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Category Unit *:</label>
+              <select class="form-control" id="edit-sku-category-code" required>
+                <option value="05">05. Dry Foods</option>
+                <option value="02">02. Frozen Foods</option>
+                <option value="01">01. Process Chicken</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Category Group Name:</label>
+              <input type="text" class="form-control" id="edit-sku-category" placeholder="e.g. Frozen Snacks / Bakery">
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Pack Size:</label>
+              <input type="text" class="form-control" id="edit-sku-pack-size" placeholder="e.g. 250gm, 1000gm">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Packets per Carton *:</label>
+              <input type="number" class="form-control" id="edit-sku-ctn-size" required min="1" value="12">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Default UOM:</label>
+              <select class="form-control" id="edit-sku-uom">
+                <option value="Packet">Packet</option>
+                <option value="Pcs">Pcs</option>
+                <option value="Carton">Carton</option>
+                <option value="Kg">Kg</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status:</label>
+            <select class="form-control" id="edit-sku-status">
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-edit-sku')">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal: Create Material -->
   <div class="modal-backdrop" id="modal-create-material">
     <div class="modal-dialog">
@@ -2299,7 +2426,7 @@
       </div>
       <form id="form-create-material" onsubmit="event.preventDefault(); submitCreateMaterial();">
         <div class="modal-body">
-          <div style="display:grid; grid-template-columns: 1fr 2fr; gap:1rem;">
+          <div style="display:grid; grid-template-columns: 1fr 1fr 2fr; gap:1rem;">
             <div class="form-group">
               <label class="form-label">Category / Unit:</label>
               <select class="form-control" id="new-mat-cat-code">
@@ -2307,6 +2434,10 @@
                 <option value="02">02. Frozen Foods</option>
                 <option value="01">01. Process Chicken</option>
               </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Item Code (Optional):</label>
+              <input type="text" class="form-control" id="new-mat-code" placeholder="Auto if blank">
             </div>
             <div class="form-group">
               <label class="form-label">Material Name:</label>
@@ -2360,6 +2491,77 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-outline" onclick="hideModal('modal-create-material')">Cancel</button>
           <button type="submit" class="btn btn-primary">Create Material</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Edit Raw & Packaging Material -->
+  <div class="modal-backdrop" id="modal-edit-material">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-edit" style="color:var(--primary);"></i> Edit Material (RM-PM)</div>
+        <button class="modal-close" onclick="hideModal('modal-edit-material')">&times;</button>
+      </div>
+      <form id="form-edit-material" onsubmit="event.preventDefault(); submitEditMaterial();">
+        <input type="hidden" id="edit-mat-id">
+        <div class="modal-body">
+          <div style="display:grid; grid-template-columns: 1fr 2fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Item Code:</label>
+              <input type="text" class="form-control" id="edit-mat-code" readonly style="background:var(--bg-tertiary); font-weight:700;">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Material Name *:</label>
+              <input type="text" class="form-control" id="edit-mat-name" required placeholder="e.g. Wheat Flour (Special Grade)">
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Type *:</label>
+              <select class="form-control" id="edit-mat-type" required>
+                <option value="RM">Raw Material (RM)</option>
+                <option value="PM">Packaging Material (PM)</option>
+                <option value="SFG">Semi-Finished Good (WIP / Intermediate)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Category Unit *:</label>
+              <select class="form-control" id="edit-mat-category-code" required>
+                <option value="05">05. Dry Foods</option>
+                <option value="02">02. Frozen Foods</option>
+                <option value="01">01. Process Chicken</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Unit of Measure (UOM) *:</label>
+              <input type="text" class="form-control" id="edit-mat-unit" required placeholder="Kg, Pcs, Ltr">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Unit Price (BDT):</label>
+              <input type="number" step="0.01" min="0" class="form-control" id="edit-mat-price" value="0.00">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Safety Stock Buffer:</label>
+              <input type="number" step="any" min="0" class="form-control" id="edit-mat-safety" value="500">
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns: 2fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label class="form-label">Primary Supplier Name:</label>
+              <input type="text" class="form-control" id="edit-mat-supplier" placeholder="e.g. City Group / Local Vendor">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Lead Time (Days):</label>
+              <input type="number" min="1" class="form-control" id="edit-mat-lead-time" value="7">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="hideModal('modal-edit-material')">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Changes</button>
         </div>
       </form>
     </div>
@@ -2661,7 +2863,7 @@
     </div>
   </div>
 
-  <script src="/static/js/portal.js?v=20261102_v4"></script>
+  <script src="/static/js/portal.js?v=20261113_v2"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -2957,6 +3159,65 @@
     </div>
   </aside>
 
+  <!-- ================= GLOBAL PLANNING WORKFLOW SLIDE-OUT DRAWER ================= -->
+  <div class="drawer-backdrop" id="workflow-drawer-backdrop" onclick="closeWorkflowDrawer()"></div>
+  <aside class="action-drawer" id="workflow-slider-drawer" style="width:420px;">
+    <div class="drawer-header" style="background:var(--bg-tertiary);">
+      <div style="display:flex; align-items:center; gap:0.6rem;">
+        <div style="width:34px; height:34px; border-radius:8px; background:rgba(37,99,235,0.12); color:var(--primary); display:flex; align-items:center; justify-content:center; font-size:1rem;">
+          <i class="fas fa-layer-group"></i>
+        </div>
+        <div>
+          <div class="drawer-title" style="font-size:0.95rem; font-weight:700;">Standard Planning Workflow</div>
+          <div class="drawer-subtitle" style="font-size:0.72rem; color:var(--text-dim);">Factory Planning & Supply Chain Lifecycle</div>
+        </div>
+      </div>
+      <button class="drawer-close-btn" onclick="closeWorkflowDrawer()">&times;</button>
+    </div>
+
+    <div class="drawer-body" style="padding:1rem; display:flex; flex-direction:column; gap:0.75rem;">
+      <!-- Step 1 -->
+      <div class="store-drawer-item" onclick="switchView('forecast'); closeWorkflowDrawer();" style="cursor:pointer;">
+        <div class="sdi-icon" style="background:rgba(37,99,235,0.12); color:var(--primary);"><i class="fas fa-chart-line"></i></div>
+        <div class="sdi-content">
+          <div class="sdi-title">1. Sales Forecast</div>
+          <div class="sdi-desc">Monthly targets with weekly breakdown (W1–W5) & revisions</div>
+        </div>
+        <span class="badge" style="background:var(--primary); color:#fff; font-size:0.68rem;">Step 1</span>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="store-drawer-item" onclick="switchView('production'); closeWorkflowDrawer();" style="cursor:pointer;">
+        <div class="sdi-icon" style="background:rgba(6,182,212,0.12); color:var(--cyan);"><i class="fas fa-industry"></i></div>
+        <div class="sdi-content">
+          <div class="sdi-title">2. Production Plan</div>
+          <div class="sdi-desc">Net production (Forecast - FG Stock) & daily batch scheduling</div>
+        </div>
+        <span class="badge" style="background:var(--cyan); color:#fff; font-size:0.68rem;">Step 2</span>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="store-drawer-item" onclick="switchView('store'); closeWorkflowDrawer();" style="cursor:pointer;">
+        <div class="sdi-icon" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas fa-warehouse"></i></div>
+        <div class="sdi-content">
+          <div class="sdi-title">3. Store & Requisitions</div>
+          <div class="sdi-desc">BOM calculation, Floor WIP, indent, MRR inward & safety stock</div>
+        </div>
+        <span class="badge" style="background:#10b981; color:#fff; font-size:0.68rem;">Step 3</span>
+      </div>
+
+      <!-- Step 4 -->
+      <div class="store-drawer-item" onclick="switchView('reports'); closeWorkflowDrawer();" style="cursor:pointer;">
+        <div class="sdi-icon" style="background:rgba(245,158,11,0.12); color:var(--warning);"><i class="fas fa-balance-scale"></i></div>
+        <div class="sdi-content">
+          <div class="sdi-title">4. Ledger & Reports</div>
+          <div class="sdi-desc">Forecast vs actual variance, FSN stock velocity & audit logs</div>
+        </div>
+        <span class="badge" style="background:var(--warning); color:#fff; font-size:0.68rem;">Step 4</span>
+      </div>
+    </div>
+  </aside>
+
   <!-- ================= DELETION FLASH ANIMATION OVERLAY ================= -->
   <div class="delete-overlay-backdrop" id="delete-animation-overlay">
     <div class="delete-card">
@@ -2977,6 +3238,9 @@
       </span>
     </div>
   </div>
+
+  <!-- ================= TOAST CONTAINER ================= -->
+  <div id="toast-container" class="toast-container"></div>
 
 </body>
 </html>

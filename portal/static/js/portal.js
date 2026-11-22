@@ -58,7 +58,8 @@ const AppState = {
   charts: {},
   storeFilter: 'all',
   theme: localStorage.getItem('portal_theme') || 'light',
-  reportFilterMode: 'month'
+  reportFilterMode: 'month',
+  hasUnsavedChanges: false
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -73,43 +74,34 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
-// ----------------- GUIDED WORKFLOW BAR TOGGLE (COLLAPSE / EXPAND) -----------------
-function toggleWorkflowBar() {
-  const content = document.getElementById('workflow-steps-content');
-  const icon = document.getElementById('workflow-toggle-icon');
-  const label = document.getElementById('workflow-toggle-label');
-  const badge = document.getElementById('workflow-collapsed-badge');
-  if (!content) return;
-
-  const isHidden = content.style.display === 'none';
-  if (isHidden) {
-    content.style.display = 'flex';
-    if (icon) icon.className = 'fas fa-chevron-up';
-    if (label) label.textContent = 'Hide';
-    if (badge) badge.style.display = 'none';
-    localStorage.setItem('workflow_bar_collapsed', 'false');
+// ----------------- GUIDED WORKFLOW SLIDE-OUT DRAWER -----------------
+function toggleWorkflowDrawer() {
+  const drawer = document.getElementById('workflow-slider-drawer');
+  const backdrop = document.getElementById('workflow-drawer-backdrop');
+  if (!drawer) return;
+  const isOpen = drawer.classList.contains('open');
+  if (isOpen) {
+    drawer.classList.remove('open');
+    if (backdrop) backdrop.classList.remove('open');
   } else {
-    content.style.display = 'none';
-    if (icon) icon.className = 'fas fa-chevron-down';
-    if (label) label.textContent = 'Expand';
-    if (badge) badge.style.display = 'inline-block';
-    localStorage.setItem('workflow_bar_collapsed', 'true');
+    drawer.classList.add('open');
+    if (backdrop) backdrop.classList.add('open');
   }
 }
 
-function initWorkflowBarState() {
-  const isCollapsed = localStorage.getItem('workflow_bar_collapsed') === 'true';
-  const content = document.getElementById('workflow-steps-content');
-  const icon = document.getElementById('workflow-toggle-icon');
-  const label = document.getElementById('workflow-toggle-label');
-  const badge = document.getElementById('workflow-collapsed-badge');
+function closeWorkflowDrawer() {
+  const drawer = document.getElementById('workflow-slider-drawer');
+  const backdrop = document.getElementById('workflow-drawer-backdrop');
+  if (drawer) drawer.classList.remove('open');
+  if (backdrop) backdrop.classList.remove('open');
+}
 
-  if (isCollapsed && content) {
-    content.style.display = 'none';
-    if (icon) icon.className = 'fas fa-chevron-down';
-    if (label) label.textContent = 'Expand';
-    if (badge) badge.style.display = 'inline-block';
-  }
+function toggleWorkflowBar() {
+  toggleWorkflowDrawer();
+}
+
+function initWorkflowBarState() {
+  // Legacy bar removed to keep pages high-density; drawer is opt-in
 }
 
 // ----------------- THEME CONTROLLER -----------------
@@ -370,7 +362,7 @@ async function logout() {
   });
 
   const titleEl = document.getElementById('page-header-title');
-  if (titleEl) titleEl.textContent = 'Executive Dashboard & Overview';
+  if (titleEl) titleEl.textContent = window.innerWidth <= 640 ? 'Dashboard' : 'Executive Dashboard & Overview';
 
   const loginOverlay = document.getElementById('login-screen-overlay');
   if (loginOverlay) {
@@ -589,11 +581,40 @@ async function submitAddCategory() {
 }
 
 // ----------------- UOM TOGGLE (Packet vs Carton) -----------------
+function updateForecastHeadersForUOM(uom) {
+  const isCarton = uom === 'Carton';
+  const thOrig = document.getElementById('th-forecast-original');
+  const thAct = document.getElementById('th-forecast-active');
+  const thWeekly = document.getElementById('th-forecast-weekly');
+  const thOut = document.getElementById('th-forecast-output');
+  const subTitle = document.getElementById('forecast-card-subtitle');
+
+  if (thOrig) thOrig.textContent = isCarton ? 'Original (Ctn)' : 'Original (Packet)';
+  if (thAct) thAct.textContent = isCarton ? 'Active Forecast (Ctn)' : 'Active Forecast (Packet)';
+  if (thWeekly) thWeekly.textContent = isCarton ? 'Weekly Breakdown (W1-W4 Ctn)' : 'Weekly Breakdown (W1-W4 Pkt)';
+  if (thOut) thOut.textContent = isCarton ? 'Total Output (Packets)' : 'Total in Cartons';
+  if (subTitle) subTitle.textContent = `Edit ${isCarton ? 'carton' : 'packet'} values and click "Save Forecast Changes"`;
+
+  const ctnWrap = document.getElementById('forecast-total-ctn-wrap');
+  const pcsWrap = document.getElementById('forecast-total-pcs-wrap');
+  if (ctnWrap) {
+    ctnWrap.style.background = isCarton ? 'rgba(37,99,235,0.12)' : 'transparent';
+    ctnWrap.style.borderColor = isCarton ? 'rgba(37,99,235,0.35)' : 'transparent';
+    ctnWrap.style.fontWeight = isCarton ? '700' : 'normal';
+  }
+  if (pcsWrap) {
+    pcsWrap.style.background = !isCarton ? 'rgba(16,185,129,0.12)' : 'transparent';
+    pcsWrap.style.borderColor = !isCarton ? 'rgba(16,185,129,0.35)' : 'transparent';
+    pcsWrap.style.fontWeight = !isCarton ? '700' : 'normal';
+  }
+}
+
 function setDisplayUOM(uom) {
   AppState.displayUOM = uom;
   document.querySelectorAll('.uom-btn').forEach(b => {
     b.classList.toggle('active', b.getAttribute('data-uom') === uom);
   });
+  updateForecastHeadersForUOM(uom);
   showToast(`Display unit changed to: ${uom}s`, 'primary');
   switchView(AppState.currentView);
 }
@@ -620,6 +641,12 @@ function initNavigation() {
 }
 
 function switchView(viewName, subOptions = {}) {
+  if (AppState.hasUnsavedChanges) {
+    const discard = confirm('You have unsaved changes in your plan! Discard changes and navigate away?');
+    if (!discard) return;
+    AppState.hasUnsavedChanges = false;
+  }
+
   // Access control: Only Super Admin can view 'users' or 'master_bom'
   if ((viewName === 'users' || viewName === 'master_bom') && !isSuperAdminUser()) {
     showToast('Access Denied: Only Super Admin has permission to view this section.', 'warning');
@@ -650,12 +677,24 @@ function switchView(viewName, subOptions = {}) {
     'production': 'Production Planning & Material Requirement',
     'store': 'Store Inventory, Stock Inward (MRR) & Safety Stock',
     'procurement': 'Supply Chain & Purchase Orders (PO)',
-    'master_bom': 'Master Data, BOM Formulation & User Management',
+    'master_bom': 'Master Data & BOM Formulation',
     'reports': 'Reports & Analytics (Performance, Stock & FSN)',
     'users': 'System User Management & Access Control (RBAC)'
   };
+  const shortTitles = {
+    'dashboard': 'Dashboard',
+    'forecast': 'Sales Forecast',
+    'production': 'Production Plans',
+    'store': 'Store & Stock',
+    'procurement': 'Supply Chain',
+    'master_bom': 'Master & BOM',
+    'reports': 'Reports',
+    'users': 'Users'
+  };
   const titleEl = document.getElementById('page-header-title');
-  if (titleEl) titleEl.textContent = titles[viewName] || 'Planning Portal';
+  if (titleEl) {
+    titleEl.textContent = (window.innerWidth <= 640 ? shortTitles[viewName] : titles[viewName]) || 'Planning Portal';
+  }
 
   // Handle specific view & sub-tab parameters
   switch (viewName) {
@@ -690,10 +729,12 @@ function switchView(viewName, subOptions = {}) {
 
 // ----------------- 1. DASHBOARD CONTROLLER -----------------
 async function loadDashboard() {
-  loadMyTasks();
   const cat = AppState.selectedCategory;
   const month = AppState.selectedMonth;
   const uom = AppState.displayUOM;
+
+  // Load action center drawer tasks asynchronously in background so main stats render immediately
+  setTimeout(loadMyTasks, 50);
 
   try {
     const res = await fetch(`/api/dashboard/stats?category=${cat}&month=${month}&uom=${uom}`);
@@ -822,6 +863,7 @@ function renderRecentTxns(txns) {
     `;
   }).join('');
 }
+
 
 function renderDashboardCharts() {
   if (!AppState.dashboardStats) return;
@@ -1062,26 +1104,69 @@ function renderForecastTable(items) {
   const tbody = document.getElementById('forecast-table-body');
   if (!tbody) return;
 
+  const isCarton = AppState.displayUOM === 'Carton';
   const canEdit = canUserEdit('forecast');
   const isSuperAdmin = AppState.currentUser?.role === 'Super Admin';
+
+  // Dynamic Table Headers based on Carton / Packet
+  const thOrig = document.getElementById('th-forecast-original');
+  const thAct = document.getElementById('th-forecast-active');
+  const thWeekly = document.getElementById('th-forecast-weekly');
+  const thOut = document.getElementById('th-forecast-output');
+  const subTitle = document.getElementById('forecast-card-subtitle');
+
+  if (thOrig) thOrig.textContent = isCarton ? 'Original (Ctn)' : 'Original (Packet)';
+  if (thAct) thAct.textContent = isCarton ? 'Active Forecast (Ctn)' : 'Active Forecast (Packet)';
+  if (thWeekly) thWeekly.textContent = isCarton ? 'Weekly Breakdown (W1-W4 Ctn)' : 'Weekly Breakdown (W1-W4 Pkt)';
+  if (thOut) thOut.textContent = isCarton ? 'Total Output (Packets)' : 'Total in Cartons';
+  if (subTitle) subTitle.textContent = `Edit ${isCarton ? 'carton' : 'packet'} values and click "Save Forecast Changes"`;
+
+  // Highlight active UOM in header total summary
+  const ctnWrap = document.getElementById('forecast-total-ctn-wrap');
+  const pcsWrap = document.getElementById('forecast-total-pcs-wrap');
+  if (ctnWrap) {
+    ctnWrap.style.background = isCarton ? 'rgba(37,99,235,0.12)' : 'transparent';
+    ctnWrap.style.borderColor = isCarton ? 'rgba(37,99,235,0.35)' : 'transparent';
+    ctnWrap.style.fontWeight = isCarton ? '700' : 'normal';
+  }
+  if (pcsWrap) {
+    pcsWrap.style.background = !isCarton ? 'rgba(16,185,129,0.12)' : 'transparent';
+    pcsWrap.style.borderColor = !isCarton ? 'rgba(16,185,129,0.35)' : 'transparent';
+    pcsWrap.style.fontWeight = !isCarton ? '700' : 'normal';
+  }
+
   let totalCtn = 0;
   let totalPcs = 0;
 
   tbody.innerHTML = items.map((it, idx) => {
-    totalCtn += (it.forecast_ctn || 0);
-    totalPcs += (it.forecast_pcs || 0);
+    const ctnSize = Math.max(1, parseInt(it.ctn_size) || 12);
+    // Strict whole numbers (no floating-point decimals)
+    const origCtn = Math.round(it.original_forecast_ctn != null ? it.original_forecast_ctn : (it.forecast_ctn || 0));
+    const origPcs = Math.round(it.original_forecast_pcs != null ? it.original_forecast_pcs : (origCtn * ctnSize));
+    const curCtn = Math.round(it.forecast_ctn || 0);
+    const curPcs = Math.round(it.forecast_pcs != null ? it.forecast_pcs : (curCtn * ctnSize));
 
-    const origCtn = it.original_forecast_ctn != null ? it.original_forecast_ctn : (it.forecast_ctn || 0);
+    totalCtn += curCtn;
+    totalPcs += curPcs;
+
     const revNo = it.revision_no || 0;
-    const varianceFromOrig = (it.forecast_ctn || 0) - origCtn;
-    
-    // Default weekly split if not set
-    const totalCurrent = it.forecast_ctn || 0;
-    const defaultW = Math.round(totalCurrent / 4);
-    const w1 = it.week1_ctn != null ? it.week1_ctn : defaultW;
-    const w2 = it.week2_ctn != null ? it.week2_ctn : defaultW;
-    const w3 = it.week3_ctn != null ? it.week3_ctn : defaultW;
-    const w4 = it.week4_ctn != null ? it.week4_ctn : (totalCurrent - (w1 + w2 + w3));
+    const diffCtn = curCtn - origCtn;
+    const diffPcs = curPcs - origPcs;
+    const diff = isCarton ? diffCtn : diffPcs;
+    const uomLabel = isCarton ? 'Ctn' : (it.uom_default || 'Pkt');
+
+    const displayedOrig = isCarton ? origCtn : origPcs;
+    const displayedCurrent = isCarton ? curCtn : curPcs;
+
+    // Default weekly split if not set (strictly whole integers)
+    const defaultW = Math.round(displayedCurrent / 4);
+    let w1 = Math.round(isCarton ? (it.week1_ctn != null ? it.week1_ctn : defaultW) : (it.week1_ctn != null ? it.week1_ctn * ctnSize : defaultW));
+    let w2 = Math.round(isCarton ? (it.week2_ctn != null ? it.week2_ctn : defaultW) : (it.week2_ctn != null ? it.week2_ctn * ctnSize : defaultW));
+    let w3 = Math.round(isCarton ? (it.week3_ctn != null ? it.week3_ctn : defaultW) : (it.week3_ctn != null ? it.week3_ctn * ctnSize : defaultW));
+    let w4 = Math.round(isCarton ? (it.week4_ctn != null ? it.week4_ctn : (displayedCurrent - (w1 + w2 + w3))) : (it.week4_ctn != null ? it.week4_ctn * ctnSize : (displayedCurrent - (w1 + w2 + w3))));
+
+    // Output representation in alternative UOM
+    const outputDisplay = isCarton ? `${curPcs.toLocaleString()} ${it.uom_default || 'Packets'}` : `${curCtn.toLocaleString()} Cartons`;
 
     return `
       <tr>
@@ -1089,28 +1174,31 @@ function renderForecastTable(items) {
         <td><strong>${it.sku_code}</strong></td>
         <td>
           <div style="font-weight:600;">${it.sku_name}</div>
-          <div style="font-size:0.72rem; color:var(--text-dim);">${it.pack_size || ''} • ${it.ctn_size} ${it.uom_default || 'Pcs'}/Ctn</div>
+          <div style="font-size:0.72rem; color:var(--text-dim);">${it.pack_size || ''} • ${ctnSize} ${it.uom_default || 'Pcs'}/Ctn</div>
         </td>
         <td><span class="pill pill-safe">${it.category}</span></td>
         <td style="text-align:right; color:var(--text-muted); font-weight:600;">
-          ${origCtn.toLocaleString()} Ctn
+          ${displayedOrig.toLocaleString()} ${uomLabel}
         </td>
         <td>
           <input type="number" 
                  class="form-control forecast-input" 
+                 step="1"
                  style="width:115px; text-align:right; font-weight:700; ${canEdit ? '' : 'background:var(--bg-tertiary); opacity:0.8; cursor:not-allowed;'}" 
                  data-sku-id="${it.sku_id}" 
-                 data-ctn-size="${it.ctn_size}"
+                 data-ctn-size="${ctnSize}"
+                 data-orig-val="${displayedOrig}"
                  data-orig-ctn="${origCtn}"
-                 value="${it.forecast_ctn || 0}" 
+                 value="${displayedCurrent}" 
                  min="0"
                  ${canEdit ? '' : 'disabled readonly'}
+                 oninput="this.value = this.value.replace(/[^0-9]/g, ''); recalculateForecastRow(this);"
                  onchange="recalculateForecastRow(this)">
-          ${varianceFromOrig !== 0 ? `
-            <div style="font-size:0.68rem; text-align:right; margin-top:2px; font-weight:700; color:${varianceFromOrig > 0 ? 'var(--success)' : 'var(--danger)'};">
-              ${varianceFromOrig > 0 ? '+' : ''}${varianceFromOrig} Ctn
+          ${diff !== 0 ? `
+            <div class="forecast-variance-badge" style="font-size:0.68rem; text-align:right; margin-top:2px; font-weight:700; color:${diff > 0 ? 'var(--success)' : 'var(--danger)'};">
+              ${diff > 0 ? '+' : ''}${Math.round(diff)} ${uomLabel}
             </div>
-          ` : ''}
+          ` : '<div class="forecast-variance-badge" style="display:none; font-size:0.68rem; text-align:right; margin-top:2px; font-weight:700;"></div>'}
         </td>
         <td style="text-align:center;">
           ${revNo > 0 ? `
@@ -1123,14 +1211,14 @@ function renderForecastTable(items) {
         </td>
         <td style="text-align:center;">
           <div style="display:inline-flex; gap:3px; align-items:center;">
-            <input type="number" class="form-control form-control-sm forecast-w1" style="width:48px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${w1}" min="0" placeholder="W1" title="Week 1 (Ctn)" ${canEdit ? '' : 'disabled'} onchange="recalculateFromWeekly(this)">
-            <input type="number" class="form-control form-control-sm forecast-w2" style="width:48px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${w2}" min="0" placeholder="W2" title="Week 2 (Ctn)" ${canEdit ? '' : 'disabled'} onchange="recalculateFromWeekly(this)">
-            <input type="number" class="form-control form-control-sm forecast-w3" style="width:48px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${w3}" min="0" placeholder="W3" title="Week 3 (Ctn)" ${canEdit ? '' : 'disabled'} onchange="recalculateFromWeekly(this)">
-            <input type="number" class="form-control form-control-sm forecast-w4" style="width:48px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${w4}" min="0" placeholder="W4" title="Week 4 (Ctn)" ${canEdit ? '' : 'disabled'} onchange="recalculateFromWeekly(this)">
+            <input type="number" step="1" class="form-control form-control-sm forecast-w1" style="width:52px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${Math.round(w1)}" min="0" placeholder="W1" title="Week 1 (${uomLabel})" ${canEdit ? '' : 'disabled'} oninput="this.value = this.value.replace(/[^0-9]/g, ''); recalculateFromWeekly(this);" onchange="recalculateFromWeekly(this)">
+            <input type="number" step="1" class="form-control form-control-sm forecast-w2" style="width:52px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${Math.round(w2)}" min="0" placeholder="W2" title="Week 2 (${uomLabel})" ${canEdit ? '' : 'disabled'} oninput="this.value = this.value.replace(/[^0-9]/g, ''); recalculateFromWeekly(this);" onchange="recalculateFromWeekly(this)">
+            <input type="number" step="1" class="form-control form-control-sm forecast-w3" style="width:52px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${Math.round(w3)}" min="0" placeholder="W3" title="Week 3 (${uomLabel})" ${canEdit ? '' : 'disabled'} oninput="this.value = this.value.replace(/[^0-9]/g, ''); recalculateFromWeekly(this);" onchange="recalculateFromWeekly(this)">
+            <input type="number" step="1" class="form-control form-control-sm forecast-w4" style="width:52px; font-size:0.72rem; padding:2px 3px; text-align:right;" data-sku-id="${it.sku_id}" value="${Math.round(w4)}" min="0" placeholder="W4" title="Week 4 (${uomLabel})" ${canEdit ? '' : 'disabled'} oninput="this.value = this.value.replace(/[^0-9]/g, ''); recalculateFromWeekly(this);" onchange="recalculateFromWeekly(this)">
           </div>
         </td>
         <td class="forecast-pcs-display" style="text-align:right; font-weight:700; color:var(--primary);">
-          ${(it.forecast_pcs || 0).toLocaleString()} ${it.uom_default || 'Packets'}
+          ${outputDisplay}
         </td>
         <td style="text-align:center; white-space:nowrap;">
           <div style="display:inline-flex; gap:4px;">
@@ -1152,16 +1240,17 @@ function renderForecastTable(items) {
     `;
   }).join('');
 
-  document.getElementById('forecast-total-cartons').textContent = totalCtn.toLocaleString();
-  document.getElementById('forecast-total-pieces').textContent = totalPcs.toLocaleString();
+  // Pure whole numbers without decimals
+  document.getElementById('forecast-total-cartons').textContent = Math.round(totalCtn).toLocaleString();
+  document.getElementById('forecast-total-pieces').textContent = Math.round(totalPcs).toLocaleString();
 }
 
 function recalculateFromWeekly(weeklyInp) {
   const row = weeklyInp.closest('tr');
-  const w1 = parseFloat(row.querySelector('.forecast-w1')?.value) || 0;
-  const w2 = parseFloat(row.querySelector('.forecast-w2')?.value) || 0;
-  const w3 = parseFloat(row.querySelector('.forecast-w3')?.value) || 0;
-  const w4 = parseFloat(row.querySelector('.forecast-w4')?.value) || 0;
+  const w1 = Math.round(parseFloat(row.querySelector('.forecast-w1')?.value) || 0);
+  const w2 = Math.round(parseFloat(row.querySelector('.forecast-w2')?.value) || 0);
+  const w3 = Math.round(parseFloat(row.querySelector('.forecast-w3')?.value) || 0);
+  const w4 = Math.round(parseFloat(row.querySelector('.forecast-w4')?.value) || 0);
   const total = w1 + w2 + w3 + w4;
 
   const mainInp = row.querySelector('.forecast-input');
@@ -1172,56 +1261,92 @@ function recalculateFromWeekly(weeklyInp) {
 }
 
 function recalculateForecastRow(input, autoSplitWeekly = true) {
-  const ctn = parseFloat(input.value) || 0;
-  const ctnSize = parseFloat(input.getAttribute('data-ctn-size')) || 1;
+  AppState.hasUnsavedChanges = true;
+  const isCarton = AppState.displayUOM === 'Carton';
+  const inputVal = Math.round(parseFloat(input.value) || 0);
+  input.value = inputVal;
+  const ctnSize = Math.max(1, parseInt(input.getAttribute('data-ctn-size')) || 12);
+  const origVal = Math.round(parseFloat(input.getAttribute('data-orig-val')) || 0);
   const row = input.closest('tr');
-  const pcsDisplay = row.querySelector('.forecast-pcs-display');
-  if (pcsDisplay) {
-    pcsDisplay.textContent = `${(ctn * ctnSize).toLocaleString()} Packets`;
+
+  const ctnVal = isCarton ? inputVal : Math.round(inputVal / ctnSize);
+  const pcsVal = isCarton ? Math.round(inputVal * ctnSize) : inputVal;
+
+  const convertedDisplay = row.querySelector('.forecast-pcs-display');
+  if (convertedDisplay) {
+    convertedDisplay.textContent = isCarton ? `${pcsVal.toLocaleString()} Packets` : `${ctnVal.toLocaleString()} Cartons`;
   }
 
-  // Update weekly inputs if autoSplitWeekly is requested
+  const diff = inputVal - origVal;
+  const uomLabel = isCarton ? 'Ctn' : 'Pkt';
+  const varEl = row.querySelector('.forecast-variance-badge');
+  if (varEl) {
+    if (diff !== 0) {
+      varEl.style.display = 'block';
+      varEl.style.color = diff > 0 ? 'var(--success)' : 'var(--danger)';
+      varEl.textContent = `${diff > 0 ? '+' : ''}${Math.round(diff)} ${uomLabel}`;
+    } else {
+      varEl.style.display = 'none';
+    }
+  }
+
+  // Update weekly inputs if autoSplitWeekly is requested (pure integers)
   if (autoSplitWeekly && row) {
     const w1 = row.querySelector('.forecast-w1');
     const w2 = row.querySelector('.forecast-w2');
     const w3 = row.querySelector('.forecast-w3');
     const w4 = row.querySelector('.forecast-w4');
-    const baseW = Math.round(ctn / 4);
+    const baseW = Math.round(inputVal / 4);
     if (w1) w1.value = baseW;
     if (w2) w2.value = baseW;
     if (w3) w3.value = baseW;
-    if (w4) w4.value = Math.max(0, ctn - (baseW * 3));
+    if (w4) w4.value = Math.max(0, inputVal - (baseW * 3));
   }
 
+  // Recalculate grand totals in pure whole integers
   let grandCtn = 0;
   let grandPcs = 0;
   document.querySelectorAll('.forecast-input').forEach(inp => {
-    const c = parseFloat(inp.value) || 0;
-    const s = parseFloat(inp.getAttribute('data-ctn-size')) || 1;
-    grandCtn += c;
-    grandPcs += c * s;
+    const iv = Math.round(parseFloat(inp.value) || 0);
+    const cs = Math.max(1, parseInt(inp.getAttribute('data-ctn-size')) || 12);
+    if (isCarton) {
+      grandCtn += iv;
+      grandPcs += Math.round(iv * cs);
+    } else {
+      grandPcs += iv;
+      grandCtn += Math.round(iv / cs);
+    }
   });
-  document.getElementById('forecast-total-cartons').textContent = grandCtn.toLocaleString();
-  document.getElementById('forecast-total-pieces').textContent = grandPcs.toLocaleString();
+  document.getElementById('forecast-total-cartons').textContent = Math.round(grandCtn).toLocaleString();
+  document.getElementById('forecast-total-pieces').textContent = Math.round(grandPcs).toLocaleString();
 }
 
 async function saveForecastChanges() {
   const month = document.getElementById('forecast-month-select').value;
+  const isCarton = AppState.displayUOM === 'Carton';
   const items = [];
   let hasChanges = false;
 
   document.querySelectorAll('.forecast-input').forEach(inp => {
     const sku_id = parseInt(inp.getAttribute('data-sku-id'));
-    const forecast_ctn = parseFloat(inp.value) || 0;
-    const orig_ctn = parseFloat(inp.getAttribute('data-orig-ctn')) || 0;
+    const ctnSize = Math.max(1, parseInt(inp.getAttribute('data-ctn-size')) || 12);
+    const inputVal = Math.round(parseFloat(inp.value) || 0);
+    const origVal = Math.round(parseFloat(inp.getAttribute('data-orig-val')) || 0);
+
+    const forecast_ctn = isCarton ? inputVal : Math.round(inputVal / ctnSize);
 
     const row = inp.closest('tr');
-    const week1_ctn = parseFloat(row.querySelector('.forecast-w1')?.value) || 0;
-    const week2_ctn = parseFloat(row.querySelector('.forecast-w2')?.value) || 0;
-    const week3_ctn = parseFloat(row.querySelector('.forecast-w3')?.value) || 0;
-    const week4_ctn = parseFloat(row.querySelector('.forecast-w4')?.value) || 0;
+    const w1Raw = Math.round(parseFloat(row.querySelector('.forecast-w1')?.value) || 0);
+    const w2Raw = Math.round(parseFloat(row.querySelector('.forecast-w2')?.value) || 0);
+    const w3Raw = Math.round(parseFloat(row.querySelector('.forecast-w3')?.value) || 0);
+    const w4Raw = Math.round(parseFloat(row.querySelector('.forecast-w4')?.value) || 0);
 
-    if (forecast_ctn !== orig_ctn) {
+    const week1_ctn = isCarton ? w1Raw : Math.round(w1Raw / ctnSize);
+    const week2_ctn = isCarton ? w2Raw : Math.round(w2Raw / ctnSize);
+    const week3_ctn = isCarton ? w3Raw : Math.round(w3Raw / ctnSize);
+    const week4_ctn = isCarton ? w4Raw : Math.round(w4Raw / ctnSize);
+
+    if (inputVal !== origVal) {
       hasChanges = true;
     }
 
@@ -1263,6 +1388,7 @@ async function saveForecastChanges() {
     });
     const data = await res.json();
     if (data.success) {
+      AppState.hasUnsavedChanges = false;
       const countMsg = data.items_updated || data.count || items.length;
       showToast(`✓ Sales forecast successfully saved (${countMsg} SKUs)!`, 'success');
       loadForecastView();
@@ -1289,7 +1415,7 @@ async function openForecastRevisionsModal(skuId, skuName) {
   const titleEl = document.getElementById('modal-revision-sku-title');
   const subEl = document.getElementById('modal-revision-sku-sub');
   if (titleEl) titleEl.textContent = `${skuName} - Forecast Revision History`;
-  if (subEl) subEl.textContent = `Role: ${data.role} • ${data.urgent > 0 ? data.urgent + ' tasks pending' : 'All tasks completed ✅'}`;
+  if (subEl) subEl.textContent = `Month: ${month} • Audit Log & Revisions`;
 
   const tbody = document.getElementById('modal-forecast-revisions-tbody');
   if (tbody) {
@@ -1483,9 +1609,10 @@ function renderProductionPlans(plans) {
     else if (p.status === 'In Production') badgeClass = 'pill-fast';
     else if (p.status === 'Planned') badgeClass = 'pill-critical';
 
-    const plannedVal = isCarton ? p.planned_ctn : (p.planned_pcs || p.planned_ctn * p.ctn_size);
-    const actualVal = isCarton ? p.actual_produced_ctn : (p.actual_produced_pcs || p.actual_produced_ctn * p.ctn_size);
-    const openVal = isCarton ? (p.opening_stock_ctn || 0.0) : (p.opening_stock_pcs || (p.opening_stock_ctn || 0.0) * p.ctn_size);
+    const plannedVal = isCarton ? Math.round(p.planned_ctn || 0) : Math.round(p.planned_pcs || (p.planned_ctn || 0) * (p.ctn_size || 1));
+    const actualVal = isCarton ? Math.round(p.actual_produced_ctn || 0) : Math.round(p.actual_produced_pcs || (p.actual_produced_ctn || 0) * (p.ctn_size || 1));
+    const openVal = isCarton ? Math.round(p.opening_stock_ctn || 0) : Math.round(p.opening_stock_pcs || (p.opening_stock_ctn || 0) * (p.ctn_size || 1));
+    const varianceVal = isCarton ? Math.round((p.actual_produced_ctn || 0) - (p.planned_ctn || 0)) : Math.round(((p.actual_produced_ctn || 0) - (p.planned_ctn || 0)) * (p.ctn_size || 1));
     const uomLabel = isCarton ? 'Ctn' : (p.uom_default || 'Pcs');
 
     let prevDateLabel = 'Prev Day';
@@ -1512,28 +1639,28 @@ function renderProductionPlans(plans) {
             <i class="fas fa-warehouse" style="color:var(--primary); font-size:0.8rem; margin-right:3px;"></i>
             ${openVal.toLocaleString()} ${uomLabel}
           </div>
-          <div style="font-size:0.68rem; color:var(--text-dim);" title="Poloxy Godown: ${p.godown_name || 'Godown'} [Group: Cut-Up-Part]">
+          <div style="font-size:0.68rem; color:var(--text-dim);" title="Poloxy Godown: ${p.godown_name || 'Godown'}">
             ${p.plan_date ? `Closing: ${prevDateLabel} / Open: ${planDateLabel}` : (p.godown_name ? p.godown_name.split(' ')[1] || p.godown_name : 'Poloxy In-Hand')}
           </div>
         </td>
         <td>
           ${canUserEdit('production') ? `
             <div style="display:flex; align-items:center; gap:4px;">
-              <input type="number" step="any" min="0" class="form-control form-control-sm plan-target-input" 
+              <input type="number" step="1" min="0" class="form-control form-control-sm plan-target-input" 
                      data-plan-id="${p.id}" data-sku-id="${p.sku_id}" data-plan-date="${p.plan_date || ''}" data-ctn-size="${p.ctn_size || 1}"
                      value="${plannedVal}" style="width:85px; text-align:right; font-weight:700; padding:2px 6px;"
-                     oninput="markProductionPlanDirty(this)">
+                     oninput="this.value = this.value.replace(/[^0-9]/g, ''); markProductionPlanDirty(this);">
               <span style="font-size:0.75rem; color:var(--text-muted);">${uomLabel}</span>
             </div>
           ` : `<strong>${plannedVal.toLocaleString()}</strong> ${uomLabel}`}
         </td>
         <td>
           <div style="font-weight:700; color:${ach >= 80 ? 'var(--success)' : 'var(--warning)'}; font-size:0.95rem;">${actualVal.toLocaleString()} ${uomLabel}</div>
-          ${p.output_amount ? `<div style="font-size:0.68rem; color:var(--success); font-weight:600;">BDT ${p.output_amount.toLocaleString()}</div>` : ''}
+          ${p.output_amount ? `<div style="font-size:0.68rem; color:var(--success); font-weight:600;">BDT ${Math.round(p.output_amount).toLocaleString()}</div>` : ''}
         </td>
         <td>
-          <span style="font-weight:600; color:${p.variance_ctn >= 0 ? 'var(--success)' : 'var(--danger)'};">
-            ${p.variance_ctn >= 0 ? '+' : ''}${p.variance_ctn} Ctn
+          <span style="font-weight:600; color:${varianceVal >= 0 ? 'var(--success)' : 'var(--danger)'};">
+            ${varianceVal >= 0 ? '+' : ''}${varianceVal.toLocaleString()} ${uomLabel}
           </span>
         </td>
         <td style="width:110px;">
@@ -1566,6 +1693,7 @@ function renderProductionPlans(plans) {
   }).join('');
 }
 
+
 // Poloxy ERP Smart Live Sync (Calendar Single Date & Range with Cache Bypass)
 let syncDateMode = 'single';
 
@@ -1581,7 +1709,7 @@ function openPoloxySyncModal() {
     'ALL': 'All Production Units'
   };
   const workCenters = {
-    '05': 'Dry Food Packing (Bakery Puffed Sauce Chanachur & Lachsa) [Main Product]',
+    '05': 'All 4 Lines: 1. Sweets Pastry & Savory (WC253), 2. Export (WC275), 3. Corporate (WC276), 4. Bakery & Chanachur (WC33)',
     '02': 'Frozen Finished Goods [Main Product]',
     '01': 'Process Chicken Plant [Main Product]',
     'ALL': 'Multi-Work Center'
@@ -1608,7 +1736,7 @@ function openPoloxySyncModal() {
   if (rFrom) rFrom.value = `${AppState.selectedMonth}-01`;
   if (rTo) rTo.value = today;
 
-  setSyncAction('actual_output');
+  setSyncAction('both');
 
   const statusMsg = document.getElementById('sync-status-msg');
   if (statusMsg) {
@@ -1784,7 +1912,7 @@ async function submitPoloxySync() {
     });
     const data = await res.json();
     
-    if (data.success) {
+    if (data.success && data.poloxy_connected !== false) {
       if (statusMsg) {
         statusMsg.style.color = 'var(--success)';
         const prodInfo = data.total_produced_cartons > 0 ? ` • Output: <strong>${data.total_produced_cartons} ctn</strong>` : '';
@@ -2144,6 +2272,109 @@ function renderStoreTable(items) {
   }).join('');
 }
 
+// Material FIFO Stock Aging Modal
+async function openMaterialAgingModal(matId) {
+  const titleEl = document.getElementById('aging-modal-title');
+  const subEl = document.getElementById('aging-modal-subtitle');
+  const bodyEl = document.getElementById('aging-modal-body');
+  
+  if (titleEl) titleEl.textContent = 'Material Stock Aging & Batch History';
+  if (subEl) subEl.textContent = 'FIFO Batch Breakdown, Receiving Dates and Shelf-Life Aging Brackets';
+  if (bodyEl) {
+    bodyEl.innerHTML = '<div style="text-align:center; padding:2rem;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary); margin-bottom:0.75rem;"></i><br><span style="color:var(--text-muted); font-size:0.88rem;">Analyzing FIFO batch receipt history & shelf-life aging...</span></div>';
+  }
+  showModal('modal-material-aging');
+
+  try {
+    const res = await fetch(`/api/store/materials/${matId}/aging`);
+    const data = await res.json();
+    
+    if (!res.ok || !data.material) {
+      if (bodyEl) bodyEl.innerHTML = `<div style="padding:1.5rem; text-align:center; color:var(--danger);"><i class="fas fa-exclamation-triangle"></i> ${data.error || 'Could not load material aging details.'}</div>`;
+      return;
+    }
+
+    const mat = data.material;
+    const s = data.summary || {};
+    const batches = data.batches || [];
+
+    if (titleEl) titleEl.textContent = `${mat.item_code} - ${mat.name} (Aging Analysis)`;
+    if (subEl) subEl.textContent = `Type: ${mat.type} • Current Godown Stock: ${Math.round(s.current_stock || mat.current_stock).toLocaleString()} ${mat.unit} • Avg Age: ${s.avg_age_days || 0} Days`;
+
+    let html = `
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:0.65rem; margin-bottom:1.25rem;">
+        <div style="background:var(--bg-tertiary); border:1px solid var(--card-border); border-radius:8px; padding:0.65rem 0.85rem; text-align:center;">
+          <div style="font-size:0.72rem; color:var(--text-dim); text-transform:uppercase; font-weight:600;">Avg Stock Age</div>
+          <div style="font-size:1.2rem; font-weight:800; color:var(--primary); margin-top:2px;">${s.avg_age_days || 0} <small style="font-size:0.75rem;">Days</small></div>
+        </div>
+        <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:8px; padding:0.65rem 0.85rem; text-align:center;">
+          <div style="font-size:0.72rem; color:var(--success); font-weight:600;">0-30 Days (Fresh)</div>
+          <div style="font-size:1.15rem; font-weight:800; color:var(--success); margin-top:2px;">${Math.round(s.bracket_0_30 || 0).toLocaleString()} <small style="font-size:0.75rem;">${mat.unit}</small></div>
+        </div>
+        <div style="background:rgba(14,165,233,0.08); border:1px solid rgba(14,165,233,0.25); border-radius:8px; padding:0.65rem 0.85rem; text-align:center;">
+          <div style="font-size:0.72rem; color:var(--cyan); font-weight:600;">31-60 Days (Normal)</div>
+          <div style="font-size:1.15rem; font-weight:800; color:var(--cyan); margin-top:2px;">${Math.round(s.bracket_31_60 || 0).toLocaleString()} <small style="font-size:0.75rem;">${mat.unit}</small></div>
+        </div>
+        <div style="background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:8px; padding:0.65rem 0.85rem; text-align:center;">
+          <div style="font-size:0.72rem; color:var(--warning); font-weight:600;">61-90 Days (Slow)</div>
+          <div style="font-size:1.15rem; font-weight:800; color:var(--warning); margin-top:2px;">${Math.round(s.bracket_61_90 || 0).toLocaleString()} <small style="font-size:0.75rem;">${mat.unit}</small></div>
+        </div>
+        <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:8px; padding:0.65rem 0.85rem; text-align:center;">
+          <div style="font-size:0.72rem; color:var(--danger); font-weight:600;">90+ Days (High Risk)</div>
+          <div style="font-size:1.15rem; font-weight:800; color:var(--danger); margin-top:2px;">${Math.round(s.bracket_90_plus || 0).toLocaleString()} <small style="font-size:0.75rem;">${mat.unit}</small></div>
+        </div>
+      </div>
+
+      <div style="overflow-x:auto;">
+        <table class="data-table" style="width:100%; font-size:0.82rem;">
+          <thead>
+            <tr>
+              <th>Ref / MRR #</th>
+              <th>Receipt Date</th>
+              <th>Supplier</th>
+              <th>Challan #</th>
+              <th style="text-align:right;">Received Qty</th>
+              <th style="text-align:right;">Active In Stock</th>
+              <th style="text-align:center;">Age (Days)</th>
+              <th style="text-align:center;">Aging Bracket</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+
+    if (batches.length === 0) {
+      html += `<tr><td colspan="8" style="text-align:center; padding:1.5rem; color:var(--text-muted);">No receiving lots or batches recorded for this material.</td></tr>`;
+    } else {
+      batches.forEach(b => {
+        html += `
+          <tr>
+            <td style="font-weight:700;">${b.ref_no}</td>
+            <td>${b.receipt_date}</td>
+            <td style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${b.supplier_name}</td>
+            <td>${b.chalan_no}</td>
+            <td style="text-align:right;">${Math.round(b.received_qty).toLocaleString()} ${mat.unit}</td>
+            <td style="text-align:right; font-weight:700; color:var(--primary);">${Math.round(b.active_qty).toLocaleString()} ${mat.unit}</td>
+            <td style="text-align:center; font-weight:600;">${b.age_days}d</td>
+            <td style="text-align:center;"><span class="pill ${b.badge_class || 'pill-safe'}">${b.bracket}</span></td>
+          </tr>
+        `;
+      });
+    }
+
+    html += `
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    if (bodyEl) bodyEl.innerHTML = html;
+  } catch (err) {
+    if (bodyEl) {
+      bodyEl.innerHTML = `<div style="padding:1.5rem; text-align:center; color:var(--danger);"><i class="fas fa-exclamation-circle"></i> Error loading aging analysis: ${err.message}</div>`;
+    }
+  }
+}
+
 // Tab 2: Incoming Production Requisitions (Matches Screenshot 2!)
 async function loadIncomingRequisitions() {
   const cat = AppState.selectedCategory;
@@ -2392,11 +2623,27 @@ function setAdminTab(tab) {
 
 async function loadAdminSKUs() {
   try {
-    const res = await fetch('/api/skus');
+    const cat = AppState.selectedCategory;
+    const url = (cat && cat !== 'ALL') ? `/api/skus?category=${cat}` : '/api/skus';
+    const res = await fetch(url);
     const skus = await res.json();
     AppState.skus = skus;
     const tbody = document.getElementById('admin-sku-table-body');
     if (!tbody) return;
+
+    const titleEl = document.getElementById('admin-sku-card-title');
+    if (titleEl) {
+      const catName = cat === '02' ? '02. Frozen Foods' : (cat === '01' ? '01. Process Chicken' : (cat === '05' ? '05. Dry Foods' : 'All Categories'));
+      titleEl.innerHTML = `<i class="fas fa-boxes" style="color:var(--primary); margin-right:6px;"></i> Finished Goods Master (${catName}: ${skus.length} SKUs)`;
+    }
+
+    if (!skus || skus.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:2rem; color:var(--text-dim);">
+        <i class="fas fa-box-open" style="font-size:1.5rem; margin-bottom:0.5rem; display:block; opacity:0.5;"></i>
+        No finished goods found for Unit ${cat}. Click <strong>"+ New Finished Good"</strong> to add products!
+      </td></tr>`;
+      return;
+    }
 
     tbody.innerHTML = skus.map(s => `
       <tr>
@@ -2411,9 +2658,14 @@ async function loadAdminSKUs() {
         </td>
         <td><span class="pill pill-safe">${s.status}</span></td>
         <td>
-          <button class="btn btn-sm btn-primary" onclick="openBOMBuilder(${s.id}, '${s.name.replace(/'/g, "\\'")}')">
-            <i class="fas fa-sitemap"></i> Edit BOM
-          </button>
+          <div style="display:inline-flex; gap:5px;">
+            <button class="btn btn-sm btn-outline" title="Edit Finished Good Item Name & Details" onclick="openEditSKUModal(${s.id})">
+              <i class="fas fa-edit"></i> Edit Item
+            </button>
+            <button class="btn btn-sm btn-primary" onclick="openBOMBuilder(${s.id}, '${s.name.replace(/'/g, "\\'")}')">
+              <i class="fas fa-sitemap"></i> BOM
+            </button>
+          </div>
         </td>
       </tr>
     `).join('');
@@ -2444,27 +2696,190 @@ async function updateSKUConversion(skuId, ctnSize) {
   }
 }
 
+async function openEditSKUModal(skuId) {
+  let sku = (AppState.skus || []).find(s => s.id === skuId);
+  if (!sku) {
+    try {
+      const res = await fetch('/api/skus');
+      const all = await res.json();
+      AppState.skus = all;
+      sku = all.find(s => s.id === skuId);
+    } catch (e) {}
+  }
+  if (!sku) {
+    showToast('Could not load SKU details', 'warning');
+    return;
+  }
+
+  document.getElementById('edit-sku-id').value = sku.id;
+  document.getElementById('edit-sku-code').value = sku.sku_code || '';
+  document.getElementById('edit-sku-name').value = sku.name || '';
+  document.getElementById('edit-sku-category-code').value = sku.category_code || '05';
+  document.getElementById('edit-sku-category').value = sku.category || 'General';
+  document.getElementById('edit-sku-pack-size').value = sku.pack_size || '';
+  document.getElementById('edit-sku-ctn-size').value = sku.ctn_size || 12;
+  document.getElementById('edit-sku-uom').value = sku.uom_default || 'Packet';
+  document.getElementById('edit-sku-status').value = sku.status || 'Active';
+
+  showModal('modal-edit-sku');
+}
+
+async function submitEditSKU() {
+  const id = parseInt(document.getElementById('edit-sku-id').value);
+  const name = document.getElementById('edit-sku-name').value.trim();
+  const category_code = document.getElementById('edit-sku-category-code').value;
+  const category = document.getElementById('edit-sku-category').value.trim();
+  const pack_size = document.getElementById('edit-sku-pack-size').value.trim();
+  const ctn_size = parseInt(document.getElementById('edit-sku-ctn-size').value) || 12;
+  const uom_default = document.getElementById('edit-sku-uom').value;
+  const status = document.getElementById('edit-sku-status').value;
+
+  if (!name) {
+    showToast('Finished good name is required', 'warning');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/skus/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        category_code,
+        category,
+        pack_size,
+        ctn_size,
+        uom_default,
+        status
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      hideModal('modal-edit-sku');
+      showToast('✓ Finished good details updated successfully!', 'success');
+      loadAdminSKUs();
+      if (AppState.currentView === 'forecast') loadForecastView();
+      if (AppState.currentView === 'production') loadProductionView();
+    } else {
+      showToast(data.error || 'Failed to update SKU', 'danger');
+    }
+  } catch (e) {
+    showToast('Error updating SKU', 'danger');
+  }
+}
+
+async function openEditMaterialModal(matId) {
+  let mat = (AppState.materials || []).find(m => m.id === matId);
+  if (!mat) {
+    try {
+      const res = await fetch('/api/materials');
+      const all = await res.json();
+      AppState.materials = all;
+      mat = all.find(m => m.id === matId);
+    } catch (e) {}
+  }
+  if (!mat) {
+    showToast('Could not load material details', 'warning');
+    return;
+  }
+
+  document.getElementById('edit-mat-id').value = mat.id;
+  document.getElementById('edit-mat-code').value = mat.item_code || '';
+  document.getElementById('edit-mat-name').value = mat.name || '';
+  document.getElementById('edit-mat-type').value = mat.type || 'RM';
+  document.getElementById('edit-mat-category-code').value = mat.category_code || '05';
+  document.getElementById('edit-mat-unit').value = mat.unit || 'Kg';
+  document.getElementById('edit-mat-price').value = mat.unit_price || 0.0;
+  document.getElementById('edit-mat-safety').value = mat.safety_stock || 0.0;
+  document.getElementById('edit-mat-supplier').value = mat.supplier_name || '';
+  document.getElementById('edit-mat-lead-time').value = mat.lead_time_days || 7;
+
+  showModal('modal-edit-material');
+}
+
+async function submitEditMaterial() {
+  const id = parseInt(document.getElementById('edit-mat-id').value);
+  const name = document.getElementById('edit-mat-name').value.trim();
+  const type = document.getElementById('edit-mat-type').value;
+  const category_code = document.getElementById('edit-mat-category-code').value;
+  const unit = document.getElementById('edit-mat-unit').value.trim();
+  const unit_price = parseFloat(document.getElementById('edit-mat-price').value) || 0.0;
+  const safety_stock = parseFloat(document.getElementById('edit-mat-safety').value) || 0.0;
+  const supplier_name = document.getElementById('edit-mat-supplier').value.trim();
+  const lead_time_days = parseInt(document.getElementById('edit-mat-lead-time').value) || 7;
+
+  if (!name) {
+    showToast('Material name is required', 'warning');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/materials/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        type,
+        category_code,
+        unit,
+        unit_price,
+        safety_stock,
+        supplier_name,
+        lead_time_days
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      hideModal('modal-edit-material');
+      showToast('✓ Material updated successfully!', 'success');
+      loadAdminMaterials();
+      if (AppState.currentView === 'store') loadStoreView();
+      if (AppState.currentView === 'dashboard') loadDashboard();
+    } else {
+      showToast(data.error || 'Failed to update material', 'danger');
+    }
+  } catch (e) {
+    showToast('Error updating material', 'danger');
+  }
+}
+
 async function loadAdminMaterials() {
   try {
-    const res = await fetch('/api/materials');
+    const cat = AppState.selectedCategory;
+    const url = (cat && cat !== 'ALL') ? `/api/materials?category=${cat}` : '/api/materials';
+    const res = await fetch(url);
     const mats = await res.json();
     AppState.materials = mats;
     const tbody = document.getElementById('admin-mat-table-body');
     if (!tbody) return;
 
+    const titleEl = document.getElementById('admin-mat-card-title');
+    if (titleEl) {
+      const catName = cat === '02' ? '02. Frozen Foods' : (cat === '01' ? '01. Process Chicken' : (cat === '05' ? '05. Dry Foods' : 'All Categories'));
+      titleEl.innerHTML = `<i class="fas fa-layer-group" style="color:var(--primary); margin-right:6px;"></i> Raw & Packaging Materials (${catName}: ${mats.length} Items)`;
+    }
+
+    if (!mats || mats.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:2rem; color:var(--text-dim);">
+        <i class="fas fa-boxes" style="font-size:1.5rem; margin-bottom:0.5rem; display:block; opacity:0.5;"></i>
+        No raw & packaging materials found for Unit ${cat}. Click <strong>"+ New RM / PM Item"</strong> to add materials!
+      </td></tr>`;
+      return;
+    }
+
     tbody.innerHTML = mats.map(m => `
       <tr>
         <td><strong>${m.item_code}</strong></td>
         <td><strong>${m.name}</strong></td>
-        <td><span class="pill ${m.type === 'RM' ? 'pill-safe' : 'pill-fast'}">${m.type}</span></td>
+        <td><span class="pill ${m.type === 'RM' ? 'pill-safe' : (m.type === 'SFG' ? 'pill-warn' : 'pill-fast')}">${m.type}</span></td>
         <td>Unit ${m.category_code}</td>
         <td>${m.unit}</td>
         <td>BDT ${m.unit_price}</td>
         <td>${m.safety_stock.toLocaleString()}</td>
         <td>${m.supplier_name || '-'}</td>
         <td>
-          <button class="btn btn-sm btn-outline" onclick="openEditMaterialModal(${m.id})">
-            <i class="fas fa-pen"></i>
+          <button class="btn btn-sm btn-outline" title="Edit Material Details" onclick="openEditMaterialModal(${m.id})">
+            <i class="fas fa-pen"></i> Edit
           </button>
         </td>
       </tr>
@@ -3049,6 +3464,7 @@ function renderProcurementTable(pos) {
   }).join('');
 }
 
+
 function openRaisePurchaseModal(matId, name, suggestedQty, price, supplier) {
   document.getElementById('raise-po-mat-id').value = matId;
   document.getElementById('raise-po-mat-name').textContent = name;
@@ -3199,6 +3615,8 @@ function exportActiveReportExcel() {
 
 function setReportDateFilterMode(mode) {
   AppState.reportFilterMode = mode;
+  const sel = document.getElementById('report-mode-select');
+  if (sel && sel.value !== mode) sel.value = mode;
   document.getElementById('report-mode-month-btn')?.classList.toggle('active', mode === 'month');
   document.getElementById('report-mode-single-btn')?.classList.toggle('active', mode === 'single');
   document.getElementById('report-mode-range-btn')?.classList.toggle('active', mode === 'range');
@@ -3292,10 +3710,10 @@ async function loadForecastVsProdReport() {
     }
 
     tbody.innerHTML = data.items.map(it => {
-      const origFcVal = isCarton ? (it.original_forecast_ctn || it.forecast_ctn) : ((it.original_forecast_ctn || it.forecast_ctn) * it.ctn_size);
-      const activeFcVal = isCarton ? it.forecast_ctn : (it.forecast_ctn * it.ctn_size);
-      const planVal = isCarton ? it.planned_ctn : (it.planned_ctn * it.ctn_size);
-      const actVal = isCarton ? it.actual_produced_ctn : (it.actual_produced_ctn * it.ctn_size);
+      const origFcVal = Math.round(isCarton ? (it.original_forecast_ctn || it.forecast_ctn || 0) : ((it.original_forecast_ctn || it.forecast_ctn || 0) * (it.ctn_size || 1)));
+      const activeFcVal = Math.round(isCarton ? (it.forecast_ctn || 0) : ((it.forecast_ctn || 0) * (it.ctn_size || 1)));
+      const planVal = Math.round(isCarton ? (it.planned_ctn || 0) : ((it.planned_ctn || 0) * (it.ctn_size || 1)));
+      const actVal = Math.round(isCarton ? (it.actual_produced_ctn || 0) : ((it.actual_produced_ctn || 0) * (it.ctn_size || 1)));
       const varVal = actVal - activeFcVal;
       const uomLabel = isCarton ? 'Ctn' : (it.uom_default || 'Pcs');
 
@@ -3659,8 +4077,13 @@ window.addEventListener('keydown', (e) => {
 });
 
 function showToast(message, type = 'primary') {
-  const container = document.getElementById('toast-container');
-  if (!container) return;
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
 
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
@@ -3938,7 +4361,7 @@ async function calculatePlanBOMRequirement() {
 
 async function submitCreatePlan() {
   const skuId = parseInt(document.getElementById('plan-sku-select').value);
-  const plannedCtn = parseFloat(document.getElementById('plan-cartons-input').value) || 0;
+  const plannedCtn = Math.round(parseFloat(document.getElementById('plan-cartons-input').value) || 0);
   const planDate = document.getElementById('plan-date-input').value;
   const notes = document.getElementById('plan-notes-input').value;
   const autoReq = document.getElementById('plan-auto-req-check').checked;
@@ -4004,8 +4427,49 @@ async function submitUpdateOutput() {
   }
 }
 
+// ----------------- GENERIC ACTION DROPDOWNS -----------------
+function toggleDropdown(menuId, e) {
+  if (e) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+  const targetMenu = document.getElementById(menuId);
+  if (!targetMenu) return;
+  const isCurrentlyOpen = targetMenu.style.display === 'block';
+  closeAllActionDropdowns();
+  if (!isCurrentlyOpen) {
+    targetMenu.style.display = 'block';
+  }
+}
+
+function closeAllActionDropdowns() {
+  document.querySelectorAll('.portal-action-dropdown').forEach(m => {
+    m.style.display = 'none';
+  });
+  const masterMenu = document.getElementById('master-add-dropdown-menu');
+  if (masterMenu) masterMenu.style.display = 'none';
+}
+
+function toggleMasterAddDropdown(e) {
+  toggleDropdown('master-add-dropdown-menu', e);
+}
+
+function closeMasterAddDropdown() {
+  closeAllActionDropdowns();
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.portal-action-dropdown') && !e.target.closest('[onclick*="toggleDropdown"]') && !e.target.closest('#btn-master-add-dropdown')) {
+    closeAllActionDropdowns();
+  }
+});
+
 function openCreateSKUModal() {
   document.getElementById('form-create-sku')?.reset();
+  const catSelect = document.getElementById('new-sku-category-code');
+  if (catSelect && AppState.selectedCategory && AppState.selectedCategory !== 'ALL') {
+    catSelect.value = AppState.selectedCategory;
+  }
   showModal('modal-create-sku');
 }
 
@@ -4044,20 +4508,24 @@ async function submitCreateSKU() {
 
 function openCreateMaterialModal() {
   document.getElementById('form-create-material')?.reset();
+  const catSelect = document.getElementById('new-mat-cat-code');
+  if (catSelect && AppState.selectedCategory && AppState.selectedCategory !== 'ALL') {
+    catSelect.value = AppState.selectedCategory;
+  }
   showModal('modal-create-material');
 }
 
 async function submitCreateMaterial() {
-  const name = document.getElementById('new-mat-name').value;
-  const code = document.getElementById('new-mat-code').value;
-  const type = document.getElementById('new-mat-type').value;
-  const unit = document.getElementById('new-mat-unit').value;
-  const price = parseFloat(document.getElementById('new-mat-price').value) || 0;
-  const stock = parseFloat(document.getElementById('new-mat-stock').value) || 0;
-  const safety = parseFloat(document.getElementById('new-mat-safety').value) || 0;
-  const supplier = document.getElementById('new-mat-supplier').value;
-  const lead = parseInt(document.getElementById('new-mat-lead').value) || 7;
-  const catCode = document.getElementById('new-mat-cat-code').value || AppState.selectedCategory;
+  const name = document.getElementById('new-mat-name')?.value?.trim() || '';
+  const code = document.getElementById('new-mat-code')?.value?.trim() || '';
+  const type = document.getElementById('new-mat-type')?.value || 'RM';
+  const unit = document.getElementById('new-mat-unit')?.value || 'Kg';
+  const price = parseFloat(document.getElementById('new-mat-price')?.value) || 0;
+  const stock = parseFloat(document.getElementById('new-mat-stock')?.value) || 0;
+  const safety = parseFloat(document.getElementById('new-mat-safety')?.value) || 0;
+  const supplier = document.getElementById('new-mat-supplier')?.value?.trim() || '';
+  const lead = parseInt(document.getElementById('new-mat-lead')?.value) || 7;
+  const catCode = document.getElementById('new-mat-cat-code')?.value || AppState.selectedCategory;
 
   if (!name) {
     showToast('Material Name is required', 'warning');
@@ -4192,6 +4660,8 @@ function downloadMRRBlankTemplate() {
   window.location.href = authDownloadUrl(`/api/store/mrr/template?category=${cat}`);
   showToast('Downloading MRR Stock Inward Blank Template with solid cell shading...', 'success');
 }
+const downloadMRRTemplate = downloadMRRBlankTemplate;
+window.downloadMRRTemplate = downloadMRRBlankTemplate;
 
 function openBulkMRRModal() {
   const f = document.getElementById('bulk-mrr-file');
@@ -4217,7 +4687,7 @@ async function submitBulkMRR() {
 }
 
 // ----------------- ENHANCED POLOXY ERP SYNC HANDLERS -----------------
-let syncActionType = 'actual_output';
+let syncActionType = 'both';
 
 function setSyncAction(action) {
   syncActionType = action;
@@ -4607,9 +5077,10 @@ async function loadMyTasks() {
       navBadge.style.display = urgentCount > 0 ? 'inline-block' : 'none';
     }
 
-    // Render on Dashboard (if container exists)
+    // Dashboard banner removed to avoid duplicate clumsy UI; drawer is primary
     if (box) {
-      renderMyTasks(box, data);
+      box.innerHTML = '';
+      box.style.display = 'none';
     }
 
     // Render in Slide-out Drawer
@@ -5010,6 +5481,7 @@ let dirtyProductionPlans = new Set();
 let dirtyStoreStock = new Set();
 
 function markProductionPlanDirty(inp) {
+  AppState.hasUnsavedChanges = true;
   const planId = inp.dataset.planId || inp.dataset.skuId;
   if (planId) {
     dirtyProductionPlans.add(inp);
@@ -5042,14 +5514,14 @@ async function saveProductionPlanChanges() {
     const skuId = inp.dataset.skuId ? parseInt(inp.dataset.skuId) : null;
     const planDate = inp.dataset.planDate || '';
     const ctnSize = parseFloat(inp.dataset.ctnSize || 1.0);
-    const rawVal = parseFloat(inp.value) || 0.0;
-    const plannedCtn = isCarton ? rawVal : (rawVal / ctnSize);
+    const rawVal = Math.round(parseFloat(inp.value) || 0);
+    const plannedCtn = isCarton ? rawVal : Math.round(rawVal / ctnSize);
 
     plansPayload.push({
       id: planId,
       sku_id: skuId,
       plan_date: planDate,
-      planned_ctn: Math.round(plannedCtn * 100) / 100
+      planned_ctn: Math.round(plannedCtn)
     });
   });
 
@@ -5070,6 +5542,7 @@ async function saveProductionPlanChanges() {
     });
     const data = await res.json();
     if (data.success) {
+      AppState.hasUnsavedChanges = false;
       showToast(`✅ ${data.message || 'Production plans saved successfully!'}`, 'success');
       dirtyProductionPlans.clear();
       loadProductionView();
@@ -5088,6 +5561,7 @@ async function saveProductionPlanChanges() {
 }
 
 function markStoreStockDirty(inp) {
+  AppState.hasUnsavedChanges = true;
   const matId = inp.dataset.matId;
   if (matId) {
     dirtyStoreStock.add(inp);
@@ -5144,6 +5618,7 @@ async function saveStoreStockChanges() {
     });
     const data = await res.json();
     if (data.success) {
+      AppState.hasUnsavedChanges = false;
       showToast(`✅ ${data.message || 'Store stock saved successfully!'}`, 'success');
       dirtyStoreStock.clear();
       loadStoreStock();
@@ -5160,3 +5635,84 @@ async function saveStoreStockChanges() {
     }
   }
 }
+
+// ==================== QUICK SEARCH & KEYBOARD NAVIGATION ====================
+
+function filterForecastTable(query) {
+  const q = (query || '').toLowerCase().trim();
+  const rows = document.querySelectorAll('#forecast-table-body tr');
+  rows.forEach(r => {
+    if (!q) {
+      r.style.display = '';
+      return;
+    }
+    const text = r.textContent.toLowerCase();
+    r.style.display = text.includes(q) ? '' : 'none';
+  });
+}
+
+function filterProductionTable(query) {
+  const q = (query || '').toLowerCase().trim();
+  const rows = document.querySelectorAll('#production-plans-table-body tr');
+  rows.forEach(r => {
+    if (!q) {
+      r.style.display = '';
+      return;
+    }
+    const text = r.textContent.toLowerCase();
+    r.style.display = text.includes(q) ? '' : 'none';
+  });
+}
+
+// Excel-Style Keyboard Navigation for Inputs (Enter, Down, Up)
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  
+  const target = e.target;
+  if (!target || !target.classList) return;
+  
+  const isInput = target.matches('.forecast-input, .forecast-input-ctn, .forecast-input-pcs, .plan-target-input, .store-stock-input');
+  if (!isInput) return;
+  
+  const currentTr = target.closest('tr');
+  if (!currentTr) return;
+  
+  if (e.key === 'Enter' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    let nextTr = currentTr.nextElementSibling;
+    while (nextTr && nextTr.style.display === 'none') {
+      nextTr = nextTr.nextElementSibling;
+    }
+    if (nextTr) {
+      const targetClass = Array.from(target.classList).find(c => c.includes('input'));
+      const nextInput = targetClass ? nextTr.querySelector(`.${targetClass}`) : nextTr.querySelector('input');
+      if (nextInput) {
+        nextInput.focus();
+        if (nextInput.select) nextInput.select();
+      }
+    }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    let prevTr = currentTr.previousElementSibling;
+    while (prevTr && prevTr.style.display === 'none') {
+      prevTr = prevTr.previousElementSibling;
+    }
+    if (prevTr) {
+      const targetClass = Array.from(target.classList).find(c => c.includes('input'));
+      const prevInput = targetClass ? prevTr.querySelector(`.${targetClass}`) : prevTr.querySelector('input');
+      if (prevInput) {
+        prevInput.focus();
+        if (prevInput.select) prevInput.select();
+      }
+    }
+  }
+});
+
+// Protect against accidental navigation with unsaved changes
+window.addEventListener('beforeunload', (e) => {
+  if (AppState && AppState.hasUnsavedChanges) {
+    e.preventDefault();
+    e.returnValue = 'You have unsaved changes in your plan. Are you sure you want to leave?';
+    return e.returnValue;
+  }
+});

@@ -1,9 +1,11 @@
 import os
 import re
+import json
 import urllib.request
 import urllib.parse
 import http.cookiejar
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -15,6 +17,12 @@ POLOXY_CONFIG = {
         'factory_godown_name': '05. Dry Food Factory Godown',
         'factory_godown_id': 'G14',
         'work_center': 'Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa)',
+        'work_centers': [
+            'WC253@#Dry Food Packing-1(Sweets Pastry & Savory)',
+            'WC275@#Dry Food Packing Export',
+            'WC276@#DF Packing Corporate',
+            'WC33@#Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa)'
+        ],
         'groups': {
             'RM': {'name': 'RAW MATERIAL', 'id': '14'},
             'PM': {'name': 'PACKAGING MATERIAL', 'id': '10'},
@@ -61,8 +69,8 @@ def clean_num(v):
 class PoloxyService:
     def __init__(self):
         self.base_url = os.environ.get("POLOXY_URL", "http://erp.paragon.com.bd").rstrip('/')
-        self.username = os.environ.get("POLOXY_USER", "a0162e0019")
-        self.password = os.environ.get("POLOXY_PASS", "pal.123456")
+        self.username = os.environ.get("POLOXY_USER", "").strip()
+        self.password = os.environ.get("POLOXY_PASS", "").strip()
         self.cj = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(self.cj),
@@ -75,6 +83,8 @@ class PoloxyService:
         self.authenticated = False
 
     def login(self):
+        if not self.username or not self.password:
+            raise ValueError("Poloxy ERP credentials missing. Please set POLOXY_USER and POLOXY_PASS in environment or ERP settings.")
         login_url = f"{self.base_url}/POLOXY/NewLogin"
         data = urllib.parse.urlencode({'uname': self.username, 'pwd': self.password}).encode('utf-8')
         req = urllib.request.Request(login_url, data=data, headers={**self.headers, 'Referer': f"{self.base_url}/POLOXY/jsp/login.jsp"})
@@ -114,7 +124,7 @@ class PoloxyService:
         self.authenticated = True
         return True
 
-    def fetch_godown_stock_items(self, godown_name, godown_id, group_name, group_id, date_str=None):
+    def fetch_godown_stock_items(self, godown_name, godown_id, group_name, group_id, date_str=None, target_items=None):
         if not self.authenticated:
             self.login()
 
@@ -127,63 +137,176 @@ class PoloxyService:
             except Exception:
                 pass
 
-        stock_url = f"{self.base_url}/COMMON/GodownItemStockReport"
-        form_data = {
-            'item_godown_stock_radio': 'Godownwise',
-            'item_stock_chk': '1',
-            'data_gdstock_godown': godown_name,
-            'gdstock_godown': str(godown_id),
-            'stock_type': '0',
-            'data_cstock_item_grp': group_name,
-            'cstock_item_grp': str(group_id),
-            'data_cstock_category_name': '',
-            'category_id': '',
-            'data_cstock_item_name': '',
-            'cstock_item_name': '',
-            'fromm': '01/10/2022',
-            'too': '31/12/2027',
-            'cstock_dummy': 'null',
-            'cstock_start_dt': date_str,
-            'cstock_end_dt': date_str,
-            'max1': 'null'
+        known_codes = {
+            'milk bread 400gm': ('Milk Bread 400gm', 'IT05884'),
+            'sandwich bread 700gm': ('Sandwich Bread 700gm', 'IT07043'),
+            'gulab jamun': ('Gulab Jamun', 'IT05960'),
+            'reshmi jilapi': ('Reshmi Jilapi', 'IT04429'),
+            'sweet curd 100gm': ('Sweet Curd 100gm', 'IT04302'),
+            'sweet & sour curd 750gm': ('Sweet & Sour Curd 750gm', 'IT09215'),
+            'sweet curd 750gm': ('Sweet Curd 750gm', 'IT04303'),
+            'mawa laddu 1000gm': ('Mawa Laddu 1000gm', 'IT04432'),
+            'motichur laddu 1000gm': ('Motichur Laddu 1000gm', 'IT04430'),
+            'mihidana laddu 1000gm': ('Mihidana Laddu 1000gm', 'IT04431'),
+            'aflatun': ('Aflatun', 'IT06765'),
+            'nimki': ('Nimki', 'IT09717'),
+            'chicken patties round': ('Chicken Patties Round', 'IT06886'),
+            'chicken patties triangle': ('Chicken Patties Triangle', 'IT06885'),
+            'petty burger': ('Petty Burger', 'IT06598'),
+            'single sandwich': ('Single Sandwich', 'IT06596'),
+            'double sandwich': ('Double Sandwich', 'IT06597'),
+            'balushai': ('Balushai', 'IT04433'),
+            'kalo jaam': ('Kalo Jaam', 'IT03948'),
+            'roshgolla': ('Roshgolla', 'IT03947'),
+            'kacha chana 1000gm': ('Kacha Chana 1000gm', 'IT04434'),
+            'lal mohon': ('Lal Mohon', 'IT04435'),
+            'vug sagor': ('Vug Sagor', 'IT04438')
         }
 
-        req = urllib.request.Request(
-            stock_url,
-            data=urllib.parse.urlencode(form_data).encode('utf-8'),
-            headers={**self.headers, 'Referer': f"{self.base_url}/COMMON/r_jsp/godownitemstockreport.jsp"}
-        )
+        def resolve_item_code(name):
+            clean = name.strip()
+            clean_low = clean.lower()
+            if clean_low in known_codes:
+                return known_codes[clean_low]
+            for k, v in known_codes.items():
+                if k in clean_low or clean_low in k:
+                    return v
+            first_word = clean.split()[0]
+            try:
+                url = f"{self.base_url}/COMMON/Report_AjaxAutoComplete?term={urllib.parse.quote(first_word)}&param1=comp_item_gdstk_itemid&param2=&param3="
+                res = self.opener.open(urllib.request.Request(url, headers=self.headers), timeout=5).read().decode('utf-8', errors='ignore')
+                ac_items = json.loads(res) if res.strip() else []
+                for it in ac_items:
+                    lbl = it['label'].strip()
+                    if clean_low == lbl.lower() or clean_low in lbl.lower():
+                        return (lbl, it['values'])
+                if ac_items:
+                    return (ac_items[0]['label'], ac_items[0]['values'])
+            except Exception:
+                pass
+            return (clean, '')
 
-        try:
-            resp = self.opener.open(req, timeout=45)
-            html = resp.read().decode('utf-8', errors='ignore')
-        except Exception as e:
-            print(f"[!] Warning: Poloxy stock report timed out or failed: {e}")
-            return {}
+        def fetch_one_item(item_name):
+            poloxy_name, code = resolve_item_code(item_name)
+            if not code:
+                return None
+            stock_url = f"{self.base_url}/COMMON/GodownItemStockReport"
+            form_data = {
+                'item_godown_stock_radio': 'Godownwise',
+                'item_stock_chk': '1',
+                'data_gdstock_godown': godown_name,
+                'gdstock_godown': str(godown_id),
+                'stock_type': '0',
+                'data_cstock_item_grp': '',
+                'cstock_item_grp': '',
+                'data_cstock_category_name': '',
+                'category_id': '',
+                'data_cstock_item_name': poloxy_name,
+                'cstock_item_name': str(code),
+                'fromm': '01/10/2026',
+                'too': date_str,
+                'cstock_dummy': 'null',
+                'cstock_start_dt': date_str,
+                'cstock_end_dt': date_str,
+                'max1': 'null'
+            }
+            try:
+                req = urllib.request.Request(
+                    stock_url,
+                    data=urllib.parse.urlencode(form_data).encode('utf-8'),
+                    headers={**self.headers, 'Referer': f"{self.base_url}/COMMON/r_jsp/godownitemstockreport.jsp"}
+                )
+                resp = self.opener.open(req, timeout=12)
+                html = resp.read().decode('utf-8', errors='ignore')
+                trs = re.findall(r'<tr[^>]*>.*?</tr>', html, re.DOTALL | re.I)
+                for tr in trs:
+                    cells = [re.sub(r'<[^>]+>', '', c).strip() for c in re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', tr, re.DOTALL)]
+                    if len(cells) >= 13:
+                        c0 = cells[0].lower()
+                        c1 = cells[1].strip()
+                        c1_low = c1.lower()
+                        c12 = cells[12].strip()
+                        if c0 not in ('total', 'item code') and c1 != '' and c1_low not in ('particular', 'total', 'sub total', 'quantity') and c12.lower() != 'quantity':
+                            closing_qty = clean_num(c12)
+                            uom = cells[2].strip() if len(cells) > 2 else 'Pkt'
+                            return {
+                                'code': code,
+                                'name': c1,
+                                'uom': uom,
+                                'closing_stock': closing_qty
+                            }
+            except Exception as e:
+                pass
+            return None
 
         items = {}
-        trs = re.findall(r'<tr[^>]*>.*?</tr>', html, re.DOTALL | re.I)
-        for tr in trs:
-            cells = [re.sub(r'<[^>]+>', '', cell).strip() for cell in re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', tr, re.DOTALL)]
-            if len(cells) >= 13 and not any(w in cells[0].lower() for w in ['item code', 'total', 'type', 'quantity']):
-                code = cells[0].strip()
-                name = cells[1].strip()
-                uom = cells[2].strip() if len(cells) > 2 else 'Kg'
-                closing_stock = clean_num(cells[12])
-                
-                # Filter out blank rows, totals, or header repetitions
-                if not name and not code:
-                    continue
-                if name.lower() in ('total', 'item name', 'sub total', 'opening stock', 'closing stock'):
-                    continue
-                
-                key = code if code else name.lower()
-                items[key] = {
-                    'code': code,
-                    'name': name,
-                    'uom': uom,
-                    'closing_stock': closing_stock
-                }
+        if target_items:
+            # Query specific target items concurrently
+            unique_targets = list(dict.fromkeys([t.strip() for t in target_items if t and t.strip()]))
+            with ThreadPoolExecutor(max_workers=6) as executor:
+                futures = {executor.submit(fetch_one_item, it): it for it in unique_targets}
+                for f in as_completed(futures):
+                    res = f.result()
+                    if res:
+                        code = res['code']
+                        name = res['name']
+                        items[code] = res
+                        items[name.lower()] = res
+                        items[futures[f].lower()] = res
+        else:
+            # Fallback if no target items list provided
+            stock_url = f"{self.base_url}/COMMON/GodownItemStockReport"
+            form_data = {
+                'item_godown_stock_radio': 'Godownwise',
+                'item_stock_chk': '1',
+                'data_gdstock_godown': godown_name,
+                'gdstock_godown': str(godown_id),
+                'stock_type': '0',
+                'data_cstock_item_grp': group_name,
+                'cstock_item_grp': str(group_id),
+                'data_cstock_category_name': '',
+                'category_id': '',
+                'data_cstock_item_name': '',
+                'cstock_item_name': '',
+                'fromm': '01/10/2026',
+                'too': date_str,
+                'cstock_dummy': 'null',
+                'cstock_start_dt': date_str,
+                'cstock_end_dt': date_str,
+                'max1': 'null'
+            }
+            try:
+                req = urllib.request.Request(
+                    stock_url,
+                    data=urllib.parse.urlencode(form_data).encode('utf-8'),
+                    headers={**self.headers, 'Referer': f"{self.base_url}/COMMON/r_jsp/godownitemstockreport.jsp"}
+                )
+                resp = self.opener.open(req, timeout=30)
+                html = resp.read().decode('utf-8', errors='ignore')
+                trs = re.findall(r'<tr[^>]*>.*?</tr>', html, re.DOTALL | re.I)
+                for tr in trs:
+                    cells = [re.sub(r'<[^>]+>', '', c).strip() for c in re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', tr, re.DOTALL)]
+                    if len(cells) >= 13:
+                        c0 = cells[0].lower()
+                        c1 = cells[1].strip()
+                        c1_low = c1.lower()
+                        c12 = cells[12].strip()
+                        if c0 not in ('total', 'item code') and c1 != '' and c1_low not in ('particular', 'total', 'sub total', 'quantity') and c12.lower() != 'quantity':
+                            code = cells[0].strip()
+                            name = c1
+                            uom = cells[2].strip() if len(cells) > 2 else 'Pkt'
+                            closing_stock = clean_num(c12)
+                            key = code if code else name.lower()
+                            entry = {
+                                'code': code,
+                                'name': name,
+                                'uom': uom,
+                                'closing_stock': closing_stock
+                            }
+                            items[key] = entry
+                            items[name.lower()] = entry
+            except Exception as e:
+                print(f"[!] Warning Poloxy stock fallback failed: {e}")
 
         return items
 
@@ -216,21 +339,25 @@ class PoloxyService:
             except Exception:
                 pass
 
-        # 1. Discover work centers for this branch
-        try:
-            url_wc = f"{self.base_url}/PROCESSINGC/dt_production_summary_rpt?key=dt_production_summary_rpt&branch_id={branch_id}"
-            req_wc = urllib.request.Request(url_wc, headers=self.headers)
-            h_wc = self.opener.open(req_wc, timeout=20).read().decode('utf-8', errors='ignore')
-            vals = re.findall(r'value=[\'"]([^\'"]+)[\'"]', h_wc)
-        except Exception as e:
-            print(f"[!] Warning fetching work centers: {e}")
-            vals = []
+        # 1. Select target work centers for this branch
+        target_wcs = cfg.get('work_centers', [])
+        if target_wcs:
+            vals = target_wcs
+        else:
+            try:
+                url_wc = f"{self.base_url}/PROCESSINGC/dt_production_summary_rpt?key=dt_production_summary_rpt&branch_id={branch_id}"
+                req_wc = urllib.request.Request(url_wc, headers=self.headers)
+                h_wc = self.opener.open(req_wc, timeout=20).read().decode('utf-8', errors='ignore')
+                vals = re.findall(r'value=[\'"]([^\'"]+)[\'"]', h_wc)
+            except Exception as e:
+                print(f"[!] Warning fetching work centers: {e}")
+                vals = []
 
         chkbranch = '$'.join(vals) if vals else f"WC33@#{cfg.get('work_center', '')}"
         ids = '/'.join([v.split('@#')[0] for v in vals]) if vals else "WC33"
         names = ';'.join([v.split('@#')[1] for v in vals]) if vals else cfg.get('work_center', '')
 
-        # 2. Submit form requesting CSV output
+        # 2. Submit form requesting HTML report (which accurately contains all workcenters without CSV truncation)
         form_data = {
             'fromm': '01/10/2022',
             'too': '31/12/2027',
@@ -242,9 +369,9 @@ class PoloxyService:
             'chkbranch': chkbranch,
             'st_date': start_date_str,
             'end_date': end_date_str,
-            'csv_or_report': 'csv',
+            'csv_or_report': 'report',
             'max1': 'null',
-            'selectall': 'ALL' if vals else ''
+            'selectall': ''
         }
 
         rpt_url = f"{self.base_url}/PROCESSINGC/dt_production_summary_rpt"
@@ -253,40 +380,81 @@ class PoloxyService:
             data=urllib.parse.urlencode(form_data).encode('utf-8'),
             headers={**self.headers, 'Referer': f"{self.base_url}/PROCESSINGC/trading_r_jsp/dt_production_summary_rpt.jsp"}
         )
-        self.opener.open(req_rpt, timeout=30)
-
-        # 3. Download the generated CSV file
-        csv_url = f"{self.base_url}/PROCESSINGC/Production%20Summary.csv"
-        # urllib requires escaping space in URL
-        encoded_csv_url = f"{self.base_url}/PROCESSINGC/Production%20Summary.csv"
-        csv_req = urllib.request.Request(encoded_csv_url, headers=self.headers)
-        csv_data = self.opener.open(csv_req, timeout=30).read().decode('utf-8', errors='ignore')
-
-        import csv
-        import io
-        reader = csv.DictReader(io.StringIO(csv_data))
+        
         output_items = {}
+        try:
+            resp = self.opener.open(req_rpt, timeout=35)
+            html_rpt = resp.read().decode('utf-8', errors='ignore')
 
-        for row in reader:
-            if row.get('Type', '').strip().upper() == 'OUTPUT':
-                item_name = row.get('Item', '').strip()
-                if not item_name or item_name.lower() in ('total', 'sub total'):
-                    continue
-                pri_qty = clean_num(row.get('Output Primary Unit Qty', 0))
-                sec_qty = clean_num(row.get('Output Secondary Unit Qty', 0))
-                qty = sec_qty if sec_qty > 0 else pri_qty
-                if qty <= 0:
-                    continue
+            # Parse HTML table rows for OUTPUT items
+            trs = re.findall(r'<tr[^>]*>.*?</tr>', html_rpt, re.DOTALL | re.I)
+            for tr in trs:
+                cells = [re.sub(r'<[^>]+>', '', c).strip() for c in re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', tr, re.DOTALL)]
+                if len(cells) >= 19 and 'OUTPUT' in [c.upper() for c in cells]:
+                    out_idx = -1
+                    for i, c in enumerate(cells):
+                        if c.upper() == 'OUTPUT':
+                            out_idx = i
+                            break
+                    if out_idx != -1:
+                        item_name = cells[out_idx - 4] if out_idx >= 4 else cells[7]
+                        wc = cells[out_idx - 5] if out_idx >= 5 else cells[6]
+                        pri_qty = clean_num(cells[out_idx + 6] if len(cells) > out_idx + 6 else '0')
+                        sec_qty = clean_num(cells[out_idx + 7] if len(cells) > out_idx + 7 else '0')
+                        qty = sec_qty if sec_qty > 0 else pri_qty
+                        
+                        if qty > 0 and item_name.lower() not in ('total', 'sub total', 'primary unit', 'secondary unit', 'item', 'workcenter'):
+                            key = item_name.lower().strip()
+                            if key in output_items:
+                                output_items[key]['qty'] += qty
+                            else:
+                                output_items[key] = {
+                                    'item': item_name,
+                                    'workcenter': wc,
+                                    'qty': qty
+                                }
+        except Exception as e:
+            print(f"[!] Warning parsing HTML report: {e}")
 
-                key = item_name.lower().strip()
-                if key in output_items:
-                    output_items[key]['qty'] += qty
-                else:
-                    output_items[key] = {
-                        'item': item_name,
-                        'workcenter': row.get('Workcenter', ''),
-                        'qty': qty
-                    }
+        # Fallback to CSV if HTML report returned no items
+        if not output_items:
+            try:
+                form_data['csv_or_report'] = 'csv'
+                req_csv_submit = urllib.request.Request(
+                    rpt_url,
+                    data=urllib.parse.urlencode(form_data).encode('utf-8'),
+                    headers={**self.headers, 'Referer': f"{self.base_url}/PROCESSINGC/trading_r_jsp/dt_production_summary_rpt.jsp"}
+                )
+                self.opener.open(req_csv_submit, timeout=30)
+                csv_url = f"{self.base_url}/PROCESSINGC/Production%20Summary.csv"
+                csv_req = urllib.request.Request(csv_url, headers=self.headers)
+                csv_data = self.opener.open(csv_req, timeout=30).read().decode('utf-8', errors='ignore')
+
+                import csv
+                import io
+                reader = csv.DictReader(io.StringIO(csv_data))
+                for row in reader:
+                    if row.get('Type', '').strip().upper() == 'OUTPUT':
+                        item_name = row.get('Item', '').strip()
+                        if not item_name or item_name.lower() in ('total', 'sub total'):
+                            continue
+                        pri_qty = clean_num(row.get('Output Primary Unit Qty', 0))
+                        sec_qty = clean_num(row.get('Output Secondary Unit Qty', 0))
+                        qty = sec_qty if sec_qty > 0 else pri_qty
+                        if qty <= 0:
+                            continue
+
+                        key = item_name.lower().strip()
+                        if key in output_items:
+                            output_items[key]['qty'] += qty
+                        else:
+                            output_items[key] = {
+                                'item': item_name,
+                                'workcenter': row.get('Workcenter', ''),
+                                'qty': qty
+                            }
+            except Exception as e_csv:
+                print(f"[!] Warning parsing fallback CSV: {e_csv}")
 
         return output_items
 

@@ -83,9 +83,14 @@ def read_table(file_storage):
         text = file_storage.read().decode("utf-8-sig", errors="ignore")
         return [list(r) for r in csv.reader(io.StringIO(text))]
     import openpyxl
-    wb = openpyxl.load_workbook(file_storage, data_only=True)
+    wb = openpyxl.load_workbook(file_storage, data_only=True, read_only=True)
     ws = wb.active
-    return [list(r) for r in ws.iter_rows(values_only=True)]
+    rows = [list(r) for r in ws.iter_rows(values_only=True)]
+    try:
+        wb.close()
+    except Exception:
+        pass
+    return rows
 
 
 def cell(row, idx):
@@ -131,13 +136,24 @@ def init_features(app, get_db, check_role_permission, get_current_session,
 
         sku_col = fc_col = None
         name_col = cat_col = ctn_col = None
+        w1_col = w2_col = w3_col = w4_col = w5_col = None
         header_row = 3
         for r in range(0, min(6, len(table))):
-            for c, v in enumerate(table[r][:15]):
+            for c, v in enumerate(table[r][:20]):
                 val = str(v or "").strip().lower()
                 if "sku code" in val or "item code" in val or val == "sku":
                     sku_col, header_row = c, r + 1
-                elif "forecast" in val:
+                elif "week 1" in val or val == "w1" or "week1" in val:
+                    w1_col = c
+                elif "week 2" in val or val == "w2" or "week2" in val:
+                    w2_col = c
+                elif "week 3" in val or val == "w3" or "week3" in val:
+                    w3_col = c
+                elif "week 4" in val or val == "w4" or "week4" in val:
+                    w4_col = c
+                elif "week 5" in val or val == "w5" or "week5" in val:
+                    w5_col = c
+                elif "forecast" in val or "total" in val:
                     fc_col = c
                 elif any(k in val for k in ["product", "finished good", "sku name", "item name", "description"]):
                     name_col = c
@@ -146,7 +162,7 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 elif any(k in val for k in ["packet", "carton", "ctn_size", "pack size", "conversion"]):
                     ctn_col = c
         if sku_col is None or fc_col is None:
-            sku_col, name_col, cat_col, ctn_col, fc_col, header_row = 1, 2, 3, 4, 5, 3
+            sku_col, name_col, cat_col, ctn_col, fc_col, header_row = 1, 2, 3, 4, 10 if (w1_col is not None or len(table[0]) >= 10) else 5, 3
 
         conn = get_db()
         try:
@@ -184,7 +200,16 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                 if not sku:
                     sku = skus_by_name.get(norm_txt(code))
 
+                # Extract weekly values if present
+                w1_val = to_float(cell(row, w1_col)) if w1_col is not None else None
+                w2_val = to_float(cell(row, w2_col)) if w2_col is not None else None
+                w3_val = to_float(cell(row, w3_col)) if w3_col is not None else None
+                w4_val = to_float(cell(row, w4_col)) if w4_col is not None else None
+                w5_val = to_float(cell(row, w5_col)) if w5_col is not None else None
+
                 fc = to_float(cell(row, fc_col))
+                if fc is None and any(w is not None for w in [w1_val, w2_val, w3_val, w4_val, w5_val]):
+                    fc = sum(w or 0.0 for w in [w1_val, w2_val, w3_val, w4_val, w5_val])
 
                 if code.upper() in seen:
                     item.update(name=sku["name"] if sku else (name_val or code), status="skip", message="Duplicate row in file - using first occurrence")
@@ -224,6 +249,7 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                         name=prod_name,
                         old=None,
                         new=fc,
+                        w1=w1_val, w2=w2_val, w3=w3_val, w4=w4_val,
                         sku_id=None,
                         is_new_sku=True,
                         new_sku_data=new_sku_payload,
@@ -234,7 +260,7 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                     seen.add(code.upper())
                     ex = existing.get(int(sku["id"]))
                     old = float(ex["forecast_ctn"] or 0) if ex else None
-                    item.update(name=sku["name"], old=old, new=fc, sku_id=int(sku["id"]))
+                    item.update(name=sku["name"], old=old, new=fc, sku_id=int(sku["id"]), w1=w1_val, w2=w2_val, w3=w3_val, w4=w4_val)
                     if ex is not None and abs(old - fc) < 0.001:
                         item.update(status="skip", message="No change in value")
                     elif ex is not None:
@@ -255,18 +281,24 @@ def init_features(app, get_db, check_role_permission, get_current_session,
             user = get_current_user_name("Bulk Upload")
             today = bd_today()
             applied = 0
+            sku_ctn_map = {int(s["id"]): int(s["ctn_size"] or 12) for s in all_skus}
+            stmts = []
+
             for it in report:
                 if it["status"] not in ("ok", "warn"):
                     continue
-                sid, val = it.get("sku_id"), it["new"]
+                sid = it.get("sku_id")
+                # Force pure rounded integer for carton values (no decimals allowed in FMCG manufacturing)
+                val = int(round(float(it["new"] or 0)))
 
                 # If this is a new SKU, dynamically register in skus table first
                 if it.get("is_new_sku") or not sid:
                     new_data = it.get("new_sku_data") or {}
                     cur = conn.cursor()
-                    existing_sku = cur.execute("SELECT id FROM skus WHERE UPPER(sku_code) = UPPER(?)", (it["code"],)).fetchone()
+                    existing_sku = cur.execute("SELECT id, ctn_size FROM skus WHERE UPPER(sku_code) = UPPER(?)", (it["code"],)).fetchone()
                     if existing_sku:
                         sid = existing_sku["id"]
+                        sku_ctn_map[sid] = int(existing_sku["ctn_size"] or 12)
                     else:
                         cur.execute("""
                             INSERT INTO skus (category_code, sku_code, name, category, ctn_size, status)
@@ -279,35 +311,56 @@ def init_features(app, get_db, check_role_permission, get_current_session,
                             new_data.get("ctn_size", 12)
                         ))
                         sid = cur.lastrowid
+                        sku_ctn_map[sid] = int(new_data.get("ctn_size", 12))
                     it["sku_id"] = sid
 
-                w1 = round(val * 0.25, 1)
-                w2 = round(val * 0.25, 1)
-                w3 = round(val * 0.25, 1)
-                w4 = max(0.0, round(val - (w1 + w2 + w3), 1))
+                # Ensure weekly split is composed of pure integers summing exactly to val
+                w1 = int(round(float(it.get("w1") if it.get("w1") is not None else (val // 4))))
+                w2 = int(round(float(it.get("w2") if it.get("w2") is not None else (val // 4))))
+                w3 = int(round(float(it.get("w3") if it.get("w3") is not None else (val // 4))))
+                w4 = int(round(float(it.get("w4") if it.get("w4") is not None else max(0, val - (w1 + w2 + w3)))))
+                if w1 + w2 + w3 + w4 != val and val > 0:
+                    w4 = max(0, val - (w1 + w2 + w3))
+
+                ctn_size = sku_ctn_map.get(sid, 12)
+                pcs_val = int(round(val * ctn_size))
+
                 ex = existing.get(sid)
                 if ex is None:
-                    conn.execute("""
-                        INSERT INTO sales_forecast (sku_id, month_year, forecast_ctn, original_forecast_ctn, revision_no,
+                    stmts.append((
+                        """INSERT INTO sales_forecast (sku_id, month_year, forecast_ctn, forecast_pcs, original_forecast_ctn, revision_no,
                             revised_date, revision_notes, week1_ctn, week2_ctn, week3_ctn, week4_ctn, created_by, updated_at)
-                        VALUES (?, ?, ?, ?, 0, ?, 'Bulk upload', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    """, (sid, month, val, val, today, w1, w2, w3, w4, user))
+                        VALUES (?, ?, ?, ?, ?, 0, ?, 'Bulk upload', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                        (sid, month, val, pcs_val, val, today, w1, w2, w3, w4, user)
+                    ))
                 else:
-                    prev = float(ex["forecast_ctn"] or 0)
+                    prev = int(round(float(ex["forecast_ctn"] or 0)))
                     new_rev = int(ex["revision_no"] or 0) + 1
-                    conn.execute("""
-                        INSERT INTO sales_forecast_revisions (sku_id, month_year, revision_no, revised_date,
+                    var_val = val - prev
+                    stmts.append((
+                        """INSERT INTO sales_forecast_revisions (sku_id, month_year, revision_no, revised_date,
                             previous_ctn, revised_ctn, variance_ctn, reason, revised_by)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'Bulk upload', ?)
-                    """, (sid, month, new_rev, today, prev, val, round(val - prev, 2), user))
-                    conn.execute("""
-                        UPDATE sales_forecast SET forecast_ctn = ?, revision_no = ?, revised_date = ?,
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'Bulk upload', ?)""",
+                        (sid, month, new_rev, today, prev, val, var_val, user)
+                    ))
+                    stmts.append((
+                        """UPDATE sales_forecast SET forecast_ctn = ?, forecast_pcs = ?, revision_no = ?, revised_date = ?,
                             revision_notes = 'Bulk upload', week1_ctn = ?, week2_ctn = ?, week3_ctn = ?, week4_ctn = ?,
                             updated_at = CURRENT_TIMESTAMP
-                        WHERE sku_id = ? AND month_year = ?
-                    """, (val, new_rev, today, w1, w2, w3, w4, sid, month))
+                        WHERE sku_id = ? AND month_year = ?""",
+                        (val, pcs_val, new_rev, today, w1, w2, w3, w4, sid, month)
+                    ))
                 applied += 1
-            conn.commit()
+
+            # High-speed batch execution (1 single network roundtrip to Turso pipeline instead of 200 HTTP calls!)
+            if hasattr(conn, "execute_batch"):
+                conn.execute_batch(stmts)
+            else:
+                cur = conn.cursor()
+                for sql_stmt, sql_params in stmts:
+                    cur.execute(sql_stmt, sql_params)
+                conn.commit()
+
             invalidate_dashboard_cache()
             return jsonify({"success": True, "count": applied,
                             "message": f"Successfully updated forecast for {applied} SKUs ({month})"})
@@ -691,6 +744,7 @@ def init_features(app, get_db, check_role_permission, get_current_session,
             if not report:
                 return jsonify({"error": "No valid production output rows found in report."}), 400
             title = "Poloxy Actual Output"
+            is_ctn = (qty_unit == "ctn")
             if preview:
                 return preview_response(report, {"title": title, "unit_note": "Quantity in " + ("Cartons" if is_ctn else "Packets/Pieces")})
 

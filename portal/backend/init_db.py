@@ -245,7 +245,7 @@ def init_database():
 
     # 1. Seed Product Categories
     categories = [
-        ('05', '05. Dry Foods', 'Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa)', 'B0005', 'Bakery, Cakes, Biscuits, Chanachur & Puffed Rice'),
+        ('05', '05. Dry Foods', 'Dry Food Packing-1(Sweets Pastry & Savory); Dry Food Packing Export; DF Packing Corporate; Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa)', 'B0005', 'Bakery, Cakes, Biscuits, Chanachur & Puffed Rice'),
         ('02', '02. Frozen Foods', 'Frozen Finished Goods', 'B0002', 'Nuggets, Sausages, Paratha, Samosa & Spring Rolls'),
         ('01', '01. Process Chicken', 'Process Chicken Plant', 'B0001', 'Fresh & Chilled Broiler Chicken, Breast, Drumsticks')
     ]
@@ -260,7 +260,7 @@ def init_database():
         ('poloxy_user', 'a0162e0019'),
         ('poloxy_pass', 'pal.123456'),
         ('default_uom_display', 'Packet'), # 'Packet' or 'Carton'
-        ('dry_food_work_center', 'Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa)'),
+        ('dry_food_work_center', 'Dry Food Packing-1(Sweets Pastry & Savory); Dry Food Packing Export; DF Packing Corporate; Dry Food Packing(Bakery Puffed Sauce Chanachur & Lachsa)'),
         ('frozen_food_work_center', 'Frozen Finished Goods'),
         ('chicken_work_center', 'Process Chicken Plant')
     ]
