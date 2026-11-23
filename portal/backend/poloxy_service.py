@@ -67,10 +67,42 @@ def clean_num(v):
         return 0.0
 
 class PoloxyService:
-    def __init__(self):
+    def __init__(self, conn=None):
         self.base_url = os.environ.get("POLOXY_URL", "http://erp.paragon.com.bd").rstrip('/')
         self.username = os.environ.get("POLOXY_USER", "").strip()
         self.password = os.environ.get("POLOXY_PASS", "").strip()
+
+        # Fallback to erp_settings in database if environment variables are not set
+        if not (self.username and self.password):
+            try:
+                db_conn = conn
+                should_close = False
+                if db_conn is None:
+                    try:
+                        from app import get_db
+                        db_conn = get_db()
+                        should_close = True
+                    except Exception:
+                        pass
+                if db_conn is not None:
+                    rows = db_conn.execute("SELECT key, value FROM erp_settings WHERE key IN ('poloxy_url', 'poloxy_user', 'poloxy_pass')").fetchall()
+                    for r in rows:
+                        k = r["key"] if hasattr(r, "__getitem__") else r[0]
+                        v = r["value"] if hasattr(r, "__getitem__") else r[1]
+                        if k == 'poloxy_url' and v and not os.environ.get("POLOXY_URL"):
+                            self.base_url = str(v).rstrip('/')
+                        elif k == 'poloxy_user' and v and not self.username:
+                            self.username = str(v).strip()
+                        elif k == 'poloxy_pass' and v and not self.password:
+                            self.password = str(v).strip()
+                    if should_close:
+                        try:
+                            db_conn.close()
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"[!] PoloxyService credential fallback warning: {e}")
+
         self.cj = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(self.cj),

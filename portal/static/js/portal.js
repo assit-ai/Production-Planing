@@ -3083,6 +3083,31 @@ async function saveERPSettings() {
   }
 }
 
+async function testPoloxyConnectionLive() {
+  const btn = document.getElementById('btn-test-poloxy-conn');
+  const origHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing Connection...';
+  }
+  try {
+    const res = await fetch('/api/erp/test-connection', { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`✅ ${data.message}`, 'success');
+    } else {
+      showToast(`❌ Connection Failed: ${data.error || 'Cannot reach Poloxy ERP'}`, 'danger');
+    }
+  } catch (e) {
+    showToast(`❌ Network Error: ${e.message}`, 'danger');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+  }
+}
+
 // ----------------- TURSO CLOUD DATABASE UI HANDLERS -----------------
 async function loadTursoStatusUI() {
   const badge = document.getElementById('turso-status-badge');

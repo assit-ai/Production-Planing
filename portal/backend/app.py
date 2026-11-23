@@ -591,6 +591,40 @@ def save_erp_settings():
     conn.close()
     return jsonify({"success": True})
 
+@app.route("/api/erp/test-connection", methods=["GET", "POST"])
+def test_poloxy_connection():
+    allowed, err_resp, err_code = check_role_permission(["Super Admin", "Admin", "Production", "Store", "Sales"], "test ERP connection")
+    if not allowed:
+        return err_resp, err_code
+    conn = get_db()
+    poloxy = PoloxyService(conn=conn)
+    conn.close()
+    
+    masked_user = (poloxy.username[:2] + "****") if len(poloxy.username) > 2 else ("Set" if poloxy.username else "Missing")
+    
+    t0 = time.time()
+    try:
+        poloxy.login()
+        elapsed = round(time.time() - t0, 2)
+        return jsonify({
+            "success": True,
+            "message": f"Successfully connected and logged into Poloxy ERP in {elapsed}s!",
+            "url": poloxy.base_url,
+            "username": masked_user,
+            "password_configured": bool(poloxy.password),
+            "response_time_seconds": elapsed
+        })
+    except Exception as e:
+        elapsed = round(time.time() - t0, 2)
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "url": poloxy.base_url,
+            "username": masked_user,
+            "password_configured": bool(poloxy.password),
+            "response_time_seconds": elapsed
+        }), 502
+
 @app.route("/api/erp/sync", methods=["POST"])
 def sync_poloxy_erp():
     """
@@ -634,14 +668,14 @@ def sync_poloxy_erp():
     pull_timestamp = datetime.now().strftime("%d-%b-%Y %I:%M:%S %p")
     date_display = single_date if mode == "single" else f"{date_from} to {date_to}"
 
-    poloxy = PoloxyService()
+    conn = get_db()
+    cursor = conn.cursor()
+
+    poloxy = PoloxyService(conn=conn)
     poloxy_connected = False
     prod_items = {}
     fg_stock_items = {}
     poloxy_error = None
-
-    conn = get_db()
-    cursor = conn.cursor()
 
     # Pre-load all SKUs for this unit
     sku_rows = conn.execute("SELECT id, sku_code, name, ctn_size FROM skus WHERE category_code = ?", (cat_code,)).fetchall()
@@ -928,15 +962,17 @@ def sync_materials_poloxy():
     godown_name = cfg['factory_godown_name']
     godown_id = cfg['factory_godown_id']
     
-    service = PoloxyService()
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    service = PoloxyService(conn=conn)
     try:
         service.login()
     except Exception as e:
+        conn.close()
         return jsonify({"success": False, "error": f"Failed to login to Poloxy ERP: {str(e)}"}), 500
         
     updated_items = []
-    conn = get_db()
-    cursor = conn.cursor()
     pull_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     try:
