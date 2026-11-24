@@ -2059,13 +2059,17 @@ async function loadStoreView() {
 }
 
 // Live Poloxy ERP RM & PM Stock Synchronization
+let isSyncingPoloxyMaterials = false;
 async function syncMaterialsFromPoloxy() {
+  if (isSyncingPoloxyMaterials) return;
+  isSyncingPoloxyMaterials = true;
   const cat = AppState.selectedCategory;
   const btn = document.getElementById('btn-sync-poloxy-rm-pm');
   let originalHtml = '';
   if (btn) {
     originalHtml = btn.innerHTML;
-    btn.disabled = true;
+    btn.classList.add('disabled');
+    btn.style.pointerEvents = 'none';
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Syncing Poloxy Live Stock... (~15s)</span>';
   }
 
@@ -2081,16 +2085,18 @@ async function syncMaterialsFromPoloxy() {
     if (data.success) {
       showToast(`✅ Successfully synced ${data.updated_count} RM and PM materials with live Poloxy ERP closing stock!`, 'success');
       loadStoreStock();
-      loadMaterials();
       if (AppState.storeSubTab === 'ledger') loadStockLedger();
     } else {
       showToast(`Poloxy Sync Error: ${data.error || 'Failed to sync'}`, 'danger');
     }
   } catch (e) {
-    showToast('Error connecting to Poloxy ERP server (Timeout/Network)', 'danger');
+    console.error('Poloxy sync exception:', e);
+    showToast(`Error connecting to Poloxy ERP server: ${e.message || 'Timeout/Network'}`, 'danger');
   } finally {
+    isSyncingPoloxyMaterials = false;
     if (btn) {
-      btn.disabled = false;
+      btn.classList.remove('disabled');
+      btn.style.pointerEvents = '';
       btn.innerHTML = originalHtml;
     }
   }
@@ -3585,21 +3591,34 @@ async function submitReceiveGRN() {
 function switchReportSubTab(tabName) {
   AppState.reportSubTab = tabName;
   const isForecast = tabName === 'forecast_prod';
+  const isStock = tabName === 'stock_fsn';
+  const isVariance = tabName === 'consumption_variance';
 
   document.getElementById('tab-btn-forecast-prod')?.classList.toggle('active', isForecast);
-  document.getElementById('tab-btn-stock-fsn')?.classList.toggle('active', !isForecast);
+  document.getElementById('tab-btn-stock-fsn')?.classList.toggle('active', isStock);
+  document.getElementById('tab-btn-consumption-variance')?.classList.toggle('active', isVariance);
 
   const fSec = document.getElementById('report-subtab-forecast-prod');
   const sSec = document.getElementById('report-subtab-stock-fsn');
+  const vSec = document.getElementById('report-subtab-consumption-variance');
   if (fSec) fSec.style.display = isForecast ? 'block' : 'none';
-  if (sSec) sSec.style.display = !isForecast ? 'block' : 'none';
+  if (sSec) sSec.style.display = isStock ? 'block' : 'none';
+  if (vSec) vSec.style.display = isVariance ? 'block' : 'none';
 
   const btnLabel = document.getElementById('export-excel-btn-label');
   if (btnLabel) {
-    btnLabel.textContent = isForecast ? 'Export Forecast vs Production (.xlsx)' : 'Export RM & PM Stock Summary (.xlsx)';
+    if (isVariance) {
+      btnLabel.textContent = 'Export Consumption Variance (.xlsx)';
+    } else if (isForecast) {
+      btnLabel.textContent = 'Export Forecast vs Production (.xlsx)';
+    } else {
+      btnLabel.textContent = 'Export RM & PM Stock Summary (.xlsx)';
+    }
   }
 
-  if (isForecast) {
+  if (isVariance) {
+    loadConsumptionVarianceReport();
+  } else if (isForecast) {
     loadForecastVsProdReport();
   } else {
     loadStockSummaryReport();
@@ -3612,11 +3631,18 @@ async function loadReportsView() {
 }
 
 function exportActiveReportExcel() {
-  const isForecast = (AppState.reportSubTab || 'forecast_prod') === 'forecast_prod';
+  const currentTab = AppState.reportSubTab || 'forecast_prod';
   const uom = AppState.displayUOM;
-  const month = document.getElementById('report-month-select')?.value || AppState.selectedMonth;
 
-  if (isForecast) {
+  if (currentTab === 'consumption_variance') {
+    const cat = document.getElementById('report-var-cat-select')?.value || AppState.selectedCategory;
+    const month = document.getElementById('report-var-month-select')?.value || AppState.selectedMonth;
+    const type = document.getElementById('report-var-type-select')?.value || 'ALL';
+    const url = `/api/reports/export/excel?section=consumption_variance&category=${cat}&month=${month}&type=${type}`;
+    showToast('Downloading Consumption Variance Excel report...', 'primary');
+    window.location.href = authDownloadUrl(url);
+  } else if (currentTab === 'forecast_prod') {
+    const month = document.getElementById('report-month-select')?.value || AppState.selectedMonth;
     const cat = document.getElementById('report-category-select')?.value || AppState.selectedCategory;
     const mode = AppState.reportFilterMode || 'month';
     let url = `/api/reports/export/excel?section=forecast_vs_prod&category=${cat}&month=${month}&uom=${uom}`;
@@ -3631,6 +3657,7 @@ function exportActiveReportExcel() {
     showToast('Downloading Forecast vs Production Excel report...', 'primary');
     window.location.href = authDownloadUrl(url);
   } else {
+    const month = document.getElementById('report-month-select')?.value || AppState.selectedMonth;
     const cat = document.getElementById('report-stock-cat-select')?.value || AppState.selectedCategory;
     const url = `/api/reports/export/excel?section=stock_fsn&category=${cat}&month=${month}&uom=${uom}`;
     showToast('Downloading RM & PM Stock Summary Excel report...', 'primary');
@@ -3841,6 +3868,136 @@ async function loadStockSummaryReport() {
   } catch (e) {
     console.error('Error loading stock summary report:', e);
   }
+}
+
+// ----------------- STANDARD VS ACTUAL RM & PM CONSUMPTION VARIANCE -----------------
+let currentVarianceItems = [];
+
+async function loadConsumptionVarianceReport() {
+  const cat = document.getElementById('report-var-cat-select')?.value || AppState.selectedCategory;
+  const month = document.getElementById('report-var-month-select')?.value || AppState.selectedMonth;
+  const type = document.getElementById('report-var-type-select')?.value || 'ALL';
+  const tbody = document.getElementById('report-consumption-variance-tbody');
+  
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center; padding:1.5rem; color:var(--text-muted);"><i class="fas fa-spinner fa-spin"></i> Calculating standard requirement vs actual issued consumption...</td></tr>';
+  }
+
+  try {
+    const res = await fetch(`/api/reports/material-consumption-variance?category=${cat}&month=${month}&type=${type}`);
+    const data = await res.json();
+    currentVarianceItems = data.items || [];
+    const summary = data.summary || {};
+
+    const stdCostEl = document.getElementById('report-var-kpi-std-cost');
+    if (stdCostEl) stdCostEl.textContent = `BDT ${(summary.total_standard_cost || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+
+    const actCostEl = document.getElementById('report-var-kpi-act-cost');
+    if (actCostEl) actCostEl.textContent = `BDT ${(summary.total_actual_cost || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+
+    const varCostEl = document.getElementById('report-var-kpi-variance-cost');
+    const varCard = document.getElementById('report-var-kpi-variance-card');
+    const varSub = document.getElementById('report-var-kpi-variance-sub');
+    const netVar = summary.total_variance_cost || 0;
+
+    if (varCostEl) {
+      varCostEl.textContent = `${netVar > 0 ? '+' : ''}BDT ${netVar.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+      if (netVar > 0) {
+        varCostEl.style.color = 'var(--danger)';
+        if (varCard) varCard.style.borderLeftColor = 'var(--danger)';
+        if (varSub) varSub.textContent = 'Net Excess / Over-budget Cost';
+      } else {
+        varCostEl.style.color = 'var(--success)';
+        if (varCard) varCard.style.borderLeftColor = 'var(--success)';
+        if (varSub) varSub.textContent = 'Net Savings / Under-consumption';
+      }
+    }
+
+    const excessEl = document.getElementById('report-var-kpi-excess');
+    if (excessEl) excessEl.textContent = `${summary.excess_items_count || 0} Excess`;
+    const favEl = document.getElementById('report-var-kpi-favorable');
+    if (favEl) favEl.textContent = `${summary.favorable_items_count || 0} Favorable`;
+
+    const countBadge = document.getElementById('report-var-count-badge');
+    if (countBadge) countBadge.textContent = `${currentVarianceItems.length} Materials Analyzed`;
+
+    const titleEl = document.getElementById('report-consumption-var-title');
+    if (titleEl) titleEl.textContent = `RM & PM Consumption Variance Report (${month} • Unit ${cat})`;
+
+    renderConsumptionVarianceTable(currentVarianceItems);
+  } catch (e) {
+    console.error('Error loading consumption variance report:', e);
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="13" style="text-align:center; padding:1.5rem; color:var(--danger);"><i class="fas fa-exclamation-circle"></i> Error loading consumption variance report: ${e.message}</td></tr>`;
+    }
+  }
+}
+
+function renderConsumptionVarianceTable(items) {
+  const tbody = document.getElementById('report-consumption-variance-tbody');
+  if (!tbody) return;
+
+  if (!items || items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center; color:var(--text-muted); padding:1.5rem;">No material consumption records found for this selection.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = items.map((it, idx) => {
+    let statusClass = 'pill-safe';
+    let statusIcon = '<i class="fas fa-check-circle"></i> Balanced';
+    if (it.status === 'Over-Consumed') {
+      statusClass = 'pill-danger';
+      statusIcon = '<i class="fas fa-arrow-up"></i> Excess';
+    } else if (it.status === 'Favorable') {
+      statusClass = 'pill-safe';
+      statusIcon = '<i class="fas fa-arrow-down"></i> Favorable';
+    } else {
+      statusClass = 'pill-warn';
+      statusIcon = '<i class="fas fa-check"></i> On Target';
+    }
+
+    const varColor = it.variance_qty > 0 ? 'color:var(--danger); font-weight:700;' : (it.variance_qty < 0 ? 'color:var(--success); font-weight:700;' : 'color:var(--text-muted);');
+    const varSign = it.variance_qty > 0 ? '+' : '';
+
+    return `
+      <tr>
+        <td style="color:var(--text-muted);">${idx + 1}</td>
+        <td><strong>${it.item_code || '-'}</strong></td>
+        <td><strong>${it.name || '-'}</strong></td>
+        <td><span class="pill ${it.type === 'RM' ? 'pill-safe' : 'pill-fast'}">${it.type || '-'}</span></td>
+        <td>${it.unit || 'Kg'}</td>
+        <td style="text-align:right;"><strong>${it.standard_req_qty.toLocaleString()}</strong></td>
+        <td style="text-align:right; color:var(--text-muted);">${it.requisitioned_qty.toLocaleString()}</td>
+        <td style="text-align:right;"><strong>${it.actual_issued_qty.toLocaleString()}</strong></td>
+        <td style="text-align:right; ${varColor}">${varSign}${it.variance_qty.toLocaleString()}</td>
+        <td style="text-align:center;">
+          <span class="pill ${Math.abs(it.variance_pct) > 10 ? (it.variance_qty > 0 ? 'pill-danger' : 'pill-safe') : 'pill-safe'}" style="font-weight:700;">
+            ${varSign}${it.variance_pct}%
+          </span>
+        </td>
+        <td style="text-align:right;">BDT ${it.unit_price.toFixed(2)}</td>
+        <td style="text-align:right; ${varColor}">
+          ${varSign}BDT ${Math.abs(it.variance_cost).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}
+        </td>
+        <td style="text-align:center;">
+          <span class="pill ${statusClass}" style="font-size:0.75rem;">${statusIcon}</span>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function filterConsumptionVarianceTable() {
+  const query = (document.getElementById('report-var-search')?.value || '').trim().toLowerCase();
+  if (!query) {
+    renderConsumptionVarianceTable(currentVarianceItems);
+    return;
+  }
+  const filtered = currentVarianceItems.filter(it => 
+    (it.name || '').toLowerCase().includes(query) || 
+    (it.item_code || '').toLowerCase().includes(query)
+  );
+  renderConsumptionVarianceTable(filtered);
 }
 
 // Dynamic Section-Specific Excel Export

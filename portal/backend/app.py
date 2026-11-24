@@ -3408,6 +3408,187 @@ def report_stock_summary():
     conn.close()
     return jsonify(rows_to_dict(rows))
 
+@app.route("/api/reports/material-consumption-variance", methods=["GET"])
+def report_material_consumption_variance():
+    month = request.args.get("month", current_month()).strip()
+    cat = request.args.get("category", "").strip()
+    m_type = request.args.get("type", "").strip().upper()
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    plan_date = request.args.get("plan_date", "").strip()
+
+    conn = get_db()
+
+    # 1. Base filter conditions for production plans
+    plan_where = []
+    plan_params = []
+    if plan_date:
+        plan_where.append("pp.plan_date = ?")
+        plan_params.append(plan_date)
+    elif date_from and date_to:
+        plan_where.append("pp.plan_date >= ? AND pp.plan_date <= ?")
+        plan_params.extend([date_from, date_to])
+    else:
+        plan_where.append("pp.month_year = ?")
+        plan_params.append(month)
+
+    if cat and cat not in ('ALL', 'undefined', 'null', 'None', ''):
+        plan_where.append("pp.category_code = ?")
+        plan_params.append(cat)
+
+    plan_cond = " AND ".join(plan_where) if plan_where else "1=1"
+
+    # Query standard material requirements calculated from BOM against actual produced cartons
+    sql_std = f"""
+        SELECT m.id AS material_id, m.category_code, m.item_code, m.name AS material_name,
+               m.type AS material_type, m.unit, COALESCE(m.unit_price, 0.0) AS unit_price,
+               ROUND(SUM(COALESCE(pp.actual_produced_ctn, 0.0) * b.rate_per_ctn), 2) AS standard_req_qty,
+               ROUND(SUM(COALESCE(pp.planned_ctn, 0.0) * b.rate_per_ctn), 2) AS planned_budget_qty,
+               ROUND(SUM(COALESCE(pp.actual_produced_ctn, 0.0)), 1) AS total_actual_ctn
+        FROM production_plans pp
+        JOIN bom b ON pp.sku_id = b.sku_id
+        JOIN materials m ON b.material_id = m.id
+        WHERE {plan_cond}
+        GROUP BY m.id
+    """
+    std_rows = conn.execute(sql_std, plan_params).fetchall()
+    std_map = {r["material_id"]: dict(r) for r in std_rows}
+
+    # 2. Query actual issued quantities from material requisitions
+    req_where = []
+    req_params = []
+    if plan_date:
+        req_where.append("mr.req_date = ?")
+        req_params.append(plan_date)
+    elif date_from and date_to:
+        req_where.append("mr.req_date >= ? AND mr.req_date <= ?")
+        req_params.extend([date_from, date_to])
+    else:
+        req_where.append("mr.month_year = ?")
+        req_params.append(month)
+
+    if cat and cat not in ('ALL', 'undefined', 'null', 'None', ''):
+        req_where.append("mr.category_code = ?")
+        req_params.append(cat)
+
+    req_cond = " AND ".join(req_where) if req_where else "1=1"
+
+    sql_actual = f"""
+        SELECT ri.material_id,
+               ROUND(SUM(COALESCE(ri.issued_qty, 0.0)), 2) AS actual_issued_qty,
+               ROUND(SUM(COALESCE(ri.required_qty, 0.0)), 2) AS requisitioned_qty
+        FROM requisition_items ri
+        JOIN material_requisitions mr ON ri.requisition_id = mr.id
+        WHERE {req_cond}
+        GROUP BY ri.material_id
+    """
+    act_rows = conn.execute(sql_actual, req_params).fetchall()
+    act_map = {r["material_id"]: dict(r) for r in act_rows}
+
+    all_mat_ids = set(std_map.keys()) | set(act_map.keys())
+    if not all_mat_ids and cat and cat != 'ALL':
+        m_rows = conn.execute("SELECT id FROM materials WHERE category_code = ?", (cat,)).fetchall()
+        all_mat_ids = {r["id"] for r in m_rows}
+
+    missing_ids = all_mat_ids - set(std_map.keys())
+    if missing_ids:
+        placeholders = ",".join(["?"] * len(missing_ids))
+        m_details = conn.execute(f"SELECT id, category_code, item_code, name, type, unit, unit_price FROM materials WHERE id IN ({placeholders})", list(missing_ids)).fetchall()
+        for md in m_details:
+            std_map[md["id"]] = {
+                "material_id": md["id"],
+                "category_code": md["category_code"],
+                "item_code": md["item_code"],
+                "material_name": md["name"],
+                "material_type": md["type"],
+                "unit": md["unit"],
+                "unit_price": md["unit_price"] or 0.0,
+                "standard_req_qty": 0.0,
+                "planned_budget_qty": 0.0,
+                "total_actual_ctn": 0.0
+            }
+
+    items = []
+    tot_std_cost = 0.0
+    tot_act_cost = 0.0
+    tot_variance_cost = 0.0
+    excess_count = 0
+    saved_count = 0
+
+    for mid in sorted(all_mat_ids, key=lambda x: (std_map.get(x, {}).get("material_type", ""), std_map.get(x, {}).get("item_code", ""))):
+        s_data = std_map.get(mid, {})
+        a_data = act_map.get(mid, {})
+        
+        m_type_val = s_data.get("material_type", "")
+        if m_type and m_type not in ('ALL', '') and m_type_val != m_type:
+            continue
+
+        std_qty = float(s_data.get("standard_req_qty", 0.0))
+        planned_qty = float(s_data.get("planned_budget_qty", 0.0))
+        actual_issued = float(a_data.get("actual_issued_qty", 0.0))
+        req_qty = float(a_data.get("requisitioned_qty", 0.0))
+        unit_price = float(s_data.get("unit_price", 0.0))
+
+        variance_qty = round(actual_issued - std_qty, 2)
+        variance_pct = round((variance_qty / std_qty * 100), 1) if std_qty > 0 else (100.0 if actual_issued > 0 else 0.0)
+        
+        std_cost = round(std_qty * unit_price, 2)
+        actual_cost = round(actual_issued * unit_price, 2)
+        variance_cost = round(variance_qty * unit_price, 2)
+
+        if variance_qty > 0.001:
+            status = "Over-Consumed"
+            excess_count += 1
+        elif variance_qty < -0.001:
+            status = "Favorable"
+            saved_count += 1
+        else:
+            status = "On Target"
+
+        tot_std_cost += std_cost
+        tot_act_cost += actual_cost
+        tot_variance_cost += variance_cost
+
+        items.append({
+            "material_id": mid,
+            "category_code": s_data.get("category_code"),
+            "item_code": s_data.get("item_code"),
+            "name": s_data.get("material_name"),
+            "type": m_type_val,
+            "unit": s_data.get("unit", "Kg"),
+            "unit_price": unit_price,
+            "standard_req_qty": std_qty,
+            "planned_budget_qty": planned_qty,
+            "requisitioned_qty": req_qty,
+            "actual_issued_qty": actual_issued,
+            "variance_qty": variance_qty,
+            "variance_pct": variance_pct,
+            "standard_cost": std_cost,
+            "actual_cost": actual_cost,
+            "variance_cost": variance_cost,
+            "status": status
+        })
+
+    conn.close()
+
+    return jsonify({
+        "month": month,
+        "category": cat,
+        "date_from": date_from,
+        "date_to": date_to,
+        "plan_date": plan_date,
+        "type": m_type,
+        "summary": {
+            "total_items": len(items),
+            "total_standard_cost": round(tot_std_cost, 2),
+            "total_actual_cost": round(tot_act_cost, 2),
+            "total_variance_cost": round(tot_variance_cost, 2),
+            "excess_items_count": excess_count,
+            "favorable_items_count": saved_count
+        },
+        "items": items
+    })
+
 # EXCEL EXPORT (MULTI-SHEET)
 
 # ----------------- BULK UPLOAD & TEMPLATE ENDPOINTS -----------------
@@ -4386,7 +4567,120 @@ def export_excel_report():
             max_len = max(len(str(cell.value or '')) for cell in col)
             ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 14)
 
-    # --- 12. SAFEGUARD: ENSURE WORKBOOK IS NEVER EMPTY ---
+    # --- 12. RM & PM CONSUMPTION VARIANCE REPORT (STANDARD VS ACTUAL) ---
+    if section in ("all", "consumption_variance", "material_consumption_variance", "variance"):
+        ws = wb.create_sheet(title="Consumption Variance")
+        ws.merge_cells("A1:N1")
+        ws["A1"] = f"PARAGON AGRO LIMITED - STANDARD VS ACTUAL RM/PM CONSUMPTION VARIANCE REPORT ({month}) - UNIT {cat}"
+        style_merged_range(ws, "A1:N1", font=title_font, fill=title_fill, border=thin_border, alignment=Alignment(horizontal="center", vertical="center"))
+        
+        headers = [
+            "Sl", "Item Code", "Material Name", "Category", "Type", "Unit",
+            "Std Required Qty (BOM)", "Requisitioned Qty", "Actual Issued Qty", "Variance Qty",
+            "Variance %", "Unit Price (BDT)", "Cost Variance (BDT)", "Status"
+        ]
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(3, col_idx, h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+
+        p_where = ["pp.month_year = ?"]
+        p_params = [month]
+        if cat and cat not in ('ALL', 'undefined', 'null', ''):
+            p_where.append("pp.category_code = ?")
+            p_params.append(cat)
+        p_cond = " AND ".join(p_where)
+
+        sql_std = f"""
+            SELECT m.id AS material_id, m.category_code, m.item_code, m.name AS material_name,
+                   m.type AS material_type, m.unit, COALESCE(m.unit_price, 0.0) AS unit_price,
+                   ROUND(SUM(COALESCE(pp.actual_produced_ctn, 0.0) * b.rate_per_ctn), 2) AS standard_req_qty
+            FROM production_plans pp
+            JOIN bom b ON pp.sku_id = b.sku_id
+            JOIN materials m ON b.material_id = m.id
+            WHERE {p_cond}
+            GROUP BY m.id
+        """
+        s_rows = {r["material_id"]: dict(r) for r in conn.execute(sql_std, p_params).fetchall()}
+
+        r_where = ["mr.month_year = ?"]
+        r_params = [month]
+        if cat and cat not in ('ALL', 'undefined', 'null', ''):
+            r_where.append("mr.category_code = ?")
+            r_params.append(cat)
+        r_cond = " AND ".join(r_where)
+
+        sql_act = f"""
+            SELECT ri.material_id,
+                   ROUND(SUM(COALESCE(ri.issued_qty, 0.0)), 2) AS actual_issued_qty,
+                   ROUND(SUM(COALESCE(ri.required_qty, 0.0)), 2) AS requisitioned_qty
+            FROM requisition_items ri
+            JOIN material_requisitions mr ON ri.requisition_id = mr.id
+            WHERE {r_cond}
+            GROUP BY ri.material_id
+        """
+        a_rows = {r["material_id"]: dict(r) for r in conn.execute(sql_act, r_params).fetchall()}
+
+        m_ids = sorted(set(s_rows.keys()) | set(a_rows.keys()))
+        if not m_ids and cat and cat != 'ALL':
+            m_ids = [r["id"] for r in conn.execute("SELECT id FROM materials WHERE category_code = ?", (cat,)).fetchall()]
+
+        for r_idx, mid in enumerate(m_ids, 4):
+            s_d = s_rows.get(mid, {})
+            a_d = a_rows.get(mid, {})
+            if not s_d:
+                m_info = conn.execute("SELECT category_code, item_code, name, type, unit, unit_price FROM materials WHERE id = ?", (mid,)).fetchone()
+                s_d = dict(m_info) if m_info else {}
+
+            std_q = float(s_d.get("standard_req_qty") or 0.0)
+            req_q = float(a_d.get("requisitioned_qty") or 0.0)
+            act_q = float(a_d.get("actual_issued_qty") or 0.0)
+            u_prc = float(s_d.get("unit_price") or 0.0)
+            v_qty = round(act_q - std_q, 2)
+            v_pct = round((v_qty / std_q * 100), 1) if std_q > 0 else (100.0 if act_q > 0 else 0.0)
+            v_cost = round(v_qty * u_prc, 2)
+
+            if v_qty > 0.001:
+                st_txt = "Over-Consumed"
+                st_fill = non_moving_fill
+            elif v_qty < -0.001:
+                st_txt = "Favorable"
+                st_fill = fast_fill
+            else:
+                st_txt = "On Target"
+                st_fill = slow_fill
+
+            c_fill = zebra_fill if (r_idx % 2 == 0) else white_fill
+            ws.cell(r_idx, 1, r_idx - 3).font = data_font
+            ws.cell(r_idx, 2, s_d.get("item_code", "-")).font = data_bold
+            ws.cell(r_idx, 3, s_d.get("material_name") or s_d.get("name", "-")).font = data_font
+            ws.cell(r_idx, 4, f"Unit {s_d.get('category_code', cat)}").font = data_font
+            ws.cell(r_idx, 5, s_d.get("material_type") or s_d.get("type", "-")).font = data_font
+            ws.cell(r_idx, 6, s_d.get("unit", "Kg")).font = data_font
+            ws.cell(r_idx, 7, std_q).font = data_bold
+            ws.cell(r_idx, 8, req_q).font = data_font
+            ws.cell(r_idx, 9, act_q).font = data_bold
+            ws.cell(r_idx, 10, v_qty).font = data_bold
+            ws.cell(r_idx, 11, f"{v_pct}%").font = data_font
+            ws.cell(r_idx, 12, u_prc).font = data_font
+            ws.cell(r_idx, 13, v_cost).font = data_bold
+
+            sc = ws.cell(r_idx, 14, st_txt)
+            sc.font = data_bold
+            sc.fill = st_fill
+
+            for c_i in range(1, 15):
+                cell = ws.cell(r_idx, c_i)
+                cell.border = thin_border
+                if c_i != 14: cell.fill = c_fill
+
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max(max_len + 3, 13)
+
+    # --- 13. SAFEGUARD: ENSURE WORKBOOK IS NEVER EMPTY ---
     if len(wb.sheetnames) == 0:
         ws_fb = wb.create_sheet(title="Report Overview")
         ws_fb.merge_cells("A1:G1")

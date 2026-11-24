@@ -866,6 +866,84 @@
           </div>
         </div>
 
+
+                <button type="button" class="btn btn-sm btn-primary" onclick="loadConsumptionVarianceReport()" style="height:30px; padding:0 0.75rem; font-size:0.78rem;">
+                  <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+              </div>
+
+              <!-- Action buttons -->
+              <div style="display:flex; gap:0.35rem; align-items:center;">
+                <span class="pill pill-safe" id="report-var-count-badge" style="font-size:0.74rem;">Loading...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary KPI Cards -->
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.6rem; margin-bottom:0.75rem;">
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--primary);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Std Required Cost (BOM)</div>
+              <div id="report-var-kpi-std-cost" style="font-size:1.15rem; font-weight:800; color:var(--primary); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Calculated from actual produced FG</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--cyan);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Actual Issued Cost</div>
+              <div id="report-var-kpi-act-cost" style="font-size:1.15rem; font-weight:800; color:var(--cyan); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Store issue / outward consumption value</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--success);" id="report-var-kpi-variance-card">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Net Cost Variance</div>
+              <div id="report-var-kpi-variance-cost" style="font-size:1.15rem; font-weight:800; color:var(--success); margin-top:2px;">BDT 0</div>
+              <small id="report-var-kpi-variance-sub" style="color:var(--text-dim); font-size:0.7rem;">Net Savings / Under-consumption</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--danger);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Variance Breakdown</div>
+              <div id="report-var-kpi-breakdown" style="font-size:1.05rem; font-weight:800; margin-top:2px; display:flex; gap:0.5rem; align-items:center;">
+                <span style="color:var(--danger);" id="report-var-kpi-excess">0 Excess</span> • 
+                <span style="color:var(--success);" id="report-var-kpi-favorable">0 Favorable</span>
+              </div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Comparison of individual materials</small>
+            </div>
+          </div>
+
+          <!-- Consumption Variance Table -->
+          <div class="card">
+            <div class="card-header" style="padding:0.5rem 1rem;">
+              <div class="card-title" style="font-size:0.92rem;">
+                <i class="fas fa-layer-group" style="color:var(--primary);"></i>
+                <span id="report-consumption-var-title">Standard vs Actual RM & PM Consumption Variance Report</span>
+              </div>
+              <div class="pill pill-safe" id="report-var-status-badge" style="font-size:0.75rem;">
+                Based on Live Actual FG Output & BOM Rates
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Unit</th>
+                    <th style="text-align:right;">Std Required Qty (BOM)</th>
+                    <th style="text-align:right;">Requisitioned Qty</th>
+                    <th style="text-align:right;">Actual Issued Qty</th>
+                    <th style="text-align:right;">Variance Qty</th>
+                    <th style="text-align:center;">Variance %</th>
+                    <th style="text-align:right;">Unit Price (BDT)</th>
+                    <th style="text-align:right;">Cost Impact (BDT)</th>
+                    <th style="text-align:center;">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="report-consumption-variance-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- SUB-TAB 2: INCOMING PRODUCTION REQUISITIONS (Matches User Screenshot 2!) -->
         <div id="store-tab-requisitions" style="display:none;">
           <div class="card" style="border-left:4px solid var(--warning);">
@@ -925,6 +1003,84 @@
           </div>
         </div>
 
+
+                <button type="button" class="btn btn-sm btn-primary" onclick="loadConsumptionVarianceReport()" style="height:30px; padding:0 0.75rem; font-size:0.78rem;">
+                  <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+              </div>
+
+              <!-- Action buttons -->
+              <div style="display:flex; gap:0.35rem; align-items:center;">
+                <span class="pill pill-safe" id="report-var-count-badge" style="font-size:0.74rem;">Loading...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary KPI Cards -->
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.6rem; margin-bottom:0.75rem;">
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--primary);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Std Required Cost (BOM)</div>
+              <div id="report-var-kpi-std-cost" style="font-size:1.15rem; font-weight:800; color:var(--primary); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Calculated from actual produced FG</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--cyan);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Actual Issued Cost</div>
+              <div id="report-var-kpi-act-cost" style="font-size:1.15rem; font-weight:800; color:var(--cyan); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Store issue / outward consumption value</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--success);" id="report-var-kpi-variance-card">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Net Cost Variance</div>
+              <div id="report-var-kpi-variance-cost" style="font-size:1.15rem; font-weight:800; color:var(--success); margin-top:2px;">BDT 0</div>
+              <small id="report-var-kpi-variance-sub" style="color:var(--text-dim); font-size:0.7rem;">Net Savings / Under-consumption</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--danger);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Variance Breakdown</div>
+              <div id="report-var-kpi-breakdown" style="font-size:1.05rem; font-weight:800; margin-top:2px; display:flex; gap:0.5rem; align-items:center;">
+                <span style="color:var(--danger);" id="report-var-kpi-excess">0 Excess</span> • 
+                <span style="color:var(--success);" id="report-var-kpi-favorable">0 Favorable</span>
+              </div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Comparison of individual materials</small>
+            </div>
+          </div>
+
+          <!-- Consumption Variance Table -->
+          <div class="card">
+            <div class="card-header" style="padding:0.5rem 1rem;">
+              <div class="card-title" style="font-size:0.92rem;">
+                <i class="fas fa-layer-group" style="color:var(--primary);"></i>
+                <span id="report-consumption-var-title">Standard vs Actual RM & PM Consumption Variance Report</span>
+              </div>
+              <div class="pill pill-safe" id="report-var-status-badge" style="font-size:0.75rem;">
+                Based on Live Actual FG Output & BOM Rates
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Unit</th>
+                    <th style="text-align:right;">Std Required Qty (BOM)</th>
+                    <th style="text-align:right;">Requisitioned Qty</th>
+                    <th style="text-align:right;">Actual Issued Qty</th>
+                    <th style="text-align:right;">Variance Qty</th>
+                    <th style="text-align:center;">Variance %</th>
+                    <th style="text-align:right;">Unit Price (BDT)</th>
+                    <th style="text-align:right;">Cost Impact (BDT)</th>
+                    <th style="text-align:center;">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="report-consumption-variance-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- SUB-TAB 4: WASTAGE REGISTER -->
         <div id="store-tab-wastage" style="display:none;">
           <div class="action-bar">
@@ -952,6 +1108,84 @@
                   </tr>
                 </thead>
                 <tbody id="store-wastage-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+
+                <button type="button" class="btn btn-sm btn-primary" onclick="loadConsumptionVarianceReport()" style="height:30px; padding:0 0.75rem; font-size:0.78rem;">
+                  <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+              </div>
+
+              <!-- Action buttons -->
+              <div style="display:flex; gap:0.35rem; align-items:center;">
+                <span class="pill pill-safe" id="report-var-count-badge" style="font-size:0.74rem;">Loading...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary KPI Cards -->
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.6rem; margin-bottom:0.75rem;">
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--primary);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Std Required Cost (BOM)</div>
+              <div id="report-var-kpi-std-cost" style="font-size:1.15rem; font-weight:800; color:var(--primary); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Calculated from actual produced FG</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--cyan);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Actual Issued Cost</div>
+              <div id="report-var-kpi-act-cost" style="font-size:1.15rem; font-weight:800; color:var(--cyan); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Store issue / outward consumption value</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--success);" id="report-var-kpi-variance-card">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Net Cost Variance</div>
+              <div id="report-var-kpi-variance-cost" style="font-size:1.15rem; font-weight:800; color:var(--success); margin-top:2px;">BDT 0</div>
+              <small id="report-var-kpi-variance-sub" style="color:var(--text-dim); font-size:0.7rem;">Net Savings / Under-consumption</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--danger);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Variance Breakdown</div>
+              <div id="report-var-kpi-breakdown" style="font-size:1.05rem; font-weight:800; margin-top:2px; display:flex; gap:0.5rem; align-items:center;">
+                <span style="color:var(--danger);" id="report-var-kpi-excess">0 Excess</span> • 
+                <span style="color:var(--success);" id="report-var-kpi-favorable">0 Favorable</span>
+              </div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Comparison of individual materials</small>
+            </div>
+          </div>
+
+          <!-- Consumption Variance Table -->
+          <div class="card">
+            <div class="card-header" style="padding:0.5rem 1rem;">
+              <div class="card-title" style="font-size:0.92rem;">
+                <i class="fas fa-layer-group" style="color:var(--primary);"></i>
+                <span id="report-consumption-var-title">Standard vs Actual RM & PM Consumption Variance Report</span>
+              </div>
+              <div class="pill pill-safe" id="report-var-status-badge" style="font-size:0.75rem;">
+                Based on Live Actual FG Output & BOM Rates
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Unit</th>
+                    <th style="text-align:right;">Std Required Qty (BOM)</th>
+                    <th style="text-align:right;">Requisitioned Qty</th>
+                    <th style="text-align:right;">Actual Issued Qty</th>
+                    <th style="text-align:right;">Variance Qty</th>
+                    <th style="text-align:center;">Variance %</th>
+                    <th style="text-align:right;">Unit Price (BDT)</th>
+                    <th style="text-align:right;">Cost Impact (BDT)</th>
+                    <th style="text-align:center;">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="report-consumption-variance-tbody">
                   <!-- Injected via JavaScript -->
                 </tbody>
               </table>
@@ -993,6 +1227,84 @@
                   </tr>
                 </thead>
                 <tbody id="store-ledger-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+
+                <button type="button" class="btn btn-sm btn-primary" onclick="loadConsumptionVarianceReport()" style="height:30px; padding:0 0.75rem; font-size:0.78rem;">
+                  <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+              </div>
+
+              <!-- Action buttons -->
+              <div style="display:flex; gap:0.35rem; align-items:center;">
+                <span class="pill pill-safe" id="report-var-count-badge" style="font-size:0.74rem;">Loading...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary KPI Cards -->
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.6rem; margin-bottom:0.75rem;">
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--primary);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Std Required Cost (BOM)</div>
+              <div id="report-var-kpi-std-cost" style="font-size:1.15rem; font-weight:800; color:var(--primary); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Calculated from actual produced FG</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--cyan);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Actual Issued Cost</div>
+              <div id="report-var-kpi-act-cost" style="font-size:1.15rem; font-weight:800; color:var(--cyan); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Store issue / outward consumption value</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--success);" id="report-var-kpi-variance-card">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Net Cost Variance</div>
+              <div id="report-var-kpi-variance-cost" style="font-size:1.15rem; font-weight:800; color:var(--success); margin-top:2px;">BDT 0</div>
+              <small id="report-var-kpi-variance-sub" style="color:var(--text-dim); font-size:0.7rem;">Net Savings / Under-consumption</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--danger);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Variance Breakdown</div>
+              <div id="report-var-kpi-breakdown" style="font-size:1.05rem; font-weight:800; margin-top:2px; display:flex; gap:0.5rem; align-items:center;">
+                <span style="color:var(--danger);" id="report-var-kpi-excess">0 Excess</span> • 
+                <span style="color:var(--success);" id="report-var-kpi-favorable">0 Favorable</span>
+              </div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Comparison of individual materials</small>
+            </div>
+          </div>
+
+          <!-- Consumption Variance Table -->
+          <div class="card">
+            <div class="card-header" style="padding:0.5rem 1rem;">
+              <div class="card-title" style="font-size:0.92rem;">
+                <i class="fas fa-layer-group" style="color:var(--primary);"></i>
+                <span id="report-consumption-var-title">Standard vs Actual RM & PM Consumption Variance Report</span>
+              </div>
+              <div class="pill pill-safe" id="report-var-status-badge" style="font-size:0.75rem;">
+                Based on Live Actual FG Output & BOM Rates
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Unit</th>
+                    <th style="text-align:right;">Std Required Qty (BOM)</th>
+                    <th style="text-align:right;">Requisitioned Qty</th>
+                    <th style="text-align:right;">Actual Issued Qty</th>
+                    <th style="text-align:right;">Variance Qty</th>
+                    <th style="text-align:center;">Variance %</th>
+                    <th style="text-align:right;">Unit Price (BDT)</th>
+                    <th style="text-align:right;">Cost Impact (BDT)</th>
+                    <th style="text-align:center;">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="report-consumption-variance-tbody">
                   <!-- Injected via JavaScript -->
                 </tbody>
               </table>
@@ -1123,6 +1435,84 @@
           </div>
         </div>
 
+
+                <button type="button" class="btn btn-sm btn-primary" onclick="loadConsumptionVarianceReport()" style="height:30px; padding:0 0.75rem; font-size:0.78rem;">
+                  <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+              </div>
+
+              <!-- Action buttons -->
+              <div style="display:flex; gap:0.35rem; align-items:center;">
+                <span class="pill pill-safe" id="report-var-count-badge" style="font-size:0.74rem;">Loading...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary KPI Cards -->
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.6rem; margin-bottom:0.75rem;">
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--primary);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Std Required Cost (BOM)</div>
+              <div id="report-var-kpi-std-cost" style="font-size:1.15rem; font-weight:800; color:var(--primary); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Calculated from actual produced FG</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--cyan);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Actual Issued Cost</div>
+              <div id="report-var-kpi-act-cost" style="font-size:1.15rem; font-weight:800; color:var(--cyan); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Store issue / outward consumption value</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--success);" id="report-var-kpi-variance-card">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Net Cost Variance</div>
+              <div id="report-var-kpi-variance-cost" style="font-size:1.15rem; font-weight:800; color:var(--success); margin-top:2px;">BDT 0</div>
+              <small id="report-var-kpi-variance-sub" style="color:var(--text-dim); font-size:0.7rem;">Net Savings / Under-consumption</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--danger);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Variance Breakdown</div>
+              <div id="report-var-kpi-breakdown" style="font-size:1.05rem; font-weight:800; margin-top:2px; display:flex; gap:0.5rem; align-items:center;">
+                <span style="color:var(--danger);" id="report-var-kpi-excess">0 Excess</span> • 
+                <span style="color:var(--success);" id="report-var-kpi-favorable">0 Favorable</span>
+              </div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Comparison of individual materials</small>
+            </div>
+          </div>
+
+          <!-- Consumption Variance Table -->
+          <div class="card">
+            <div class="card-header" style="padding:0.5rem 1rem;">
+              <div class="card-title" style="font-size:0.92rem;">
+                <i class="fas fa-layer-group" style="color:var(--primary);"></i>
+                <span id="report-consumption-var-title">Standard vs Actual RM & PM Consumption Variance Report</span>
+              </div>
+              <div class="pill pill-safe" id="report-var-status-badge" style="font-size:0.75rem;">
+                Based on Live Actual FG Output & BOM Rates
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Unit</th>
+                    <th style="text-align:right;">Std Required Qty (BOM)</th>
+                    <th style="text-align:right;">Requisitioned Qty</th>
+                    <th style="text-align:right;">Actual Issued Qty</th>
+                    <th style="text-align:right;">Variance Qty</th>
+                    <th style="text-align:center;">Variance %</th>
+                    <th style="text-align:right;">Unit Price (BDT)</th>
+                    <th style="text-align:right;">Cost Impact (BDT)</th>
+                    <th style="text-align:center;">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="report-consumption-variance-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- Tab 2: Materials -->
         <div id="admin-tab-materials" class="admin-tab-content" style="display:none;">
           <div class="card">
@@ -1145,6 +1535,84 @@
                   </tr>
                 </thead>
                 <tbody id="admin-mat-table-body">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+
+                <button type="button" class="btn btn-sm btn-primary" onclick="loadConsumptionVarianceReport()" style="height:30px; padding:0 0.75rem; font-size:0.78rem;">
+                  <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+              </div>
+
+              <!-- Action buttons -->
+              <div style="display:flex; gap:0.35rem; align-items:center;">
+                <span class="pill pill-safe" id="report-var-count-badge" style="font-size:0.74rem;">Loading...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary KPI Cards -->
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.6rem; margin-bottom:0.75rem;">
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--primary);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Std Required Cost (BOM)</div>
+              <div id="report-var-kpi-std-cost" style="font-size:1.15rem; font-weight:800; color:var(--primary); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Calculated from actual produced FG</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--cyan);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Actual Issued Cost</div>
+              <div id="report-var-kpi-act-cost" style="font-size:1.15rem; font-weight:800; color:var(--cyan); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Store issue / outward consumption value</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--success);" id="report-var-kpi-variance-card">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Net Cost Variance</div>
+              <div id="report-var-kpi-variance-cost" style="font-size:1.15rem; font-weight:800; color:var(--success); margin-top:2px;">BDT 0</div>
+              <small id="report-var-kpi-variance-sub" style="color:var(--text-dim); font-size:0.7rem;">Net Savings / Under-consumption</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--danger);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Variance Breakdown</div>
+              <div id="report-var-kpi-breakdown" style="font-size:1.05rem; font-weight:800; margin-top:2px; display:flex; gap:0.5rem; align-items:center;">
+                <span style="color:var(--danger);" id="report-var-kpi-excess">0 Excess</span> • 
+                <span style="color:var(--success);" id="report-var-kpi-favorable">0 Favorable</span>
+              </div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Comparison of individual materials</small>
+            </div>
+          </div>
+
+          <!-- Consumption Variance Table -->
+          <div class="card">
+            <div class="card-header" style="padding:0.5rem 1rem;">
+              <div class="card-title" style="font-size:0.92rem;">
+                <i class="fas fa-layer-group" style="color:var(--primary);"></i>
+                <span id="report-consumption-var-title">Standard vs Actual RM & PM Consumption Variance Report</span>
+              </div>
+              <div class="pill pill-safe" id="report-var-status-badge" style="font-size:0.75rem;">
+                Based on Live Actual FG Output & BOM Rates
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Unit</th>
+                    <th style="text-align:right;">Std Required Qty (BOM)</th>
+                    <th style="text-align:right;">Requisitioned Qty</th>
+                    <th style="text-align:right;">Actual Issued Qty</th>
+                    <th style="text-align:right;">Variance Qty</th>
+                    <th style="text-align:center;">Variance %</th>
+                    <th style="text-align:right;">Unit Price (BDT)</th>
+                    <th style="text-align:right;">Cost Impact (BDT)</th>
+                    <th style="text-align:center;">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="report-consumption-variance-tbody">
                   <!-- Injected via JavaScript -->
                 </tbody>
               </table>
@@ -1276,6 +1744,9 @@
             <button type="button" class="sub-tab-link" id="tab-btn-stock-fsn" onclick="switchReportSubTab('stock_fsn')">
               <i class="fas fa-boxes"></i> RM & PM Stock Summary & FSN Status
             </button>
+            <button type="button" class="sub-tab-link" id="tab-btn-consumption-variance" onclick="switchReportSubTab('consumption_variance')">
+              <i class="fas fa-layer-group"></i> Standard vs Actual RM-PM Consumption
+            </button>
           </div>
 
           <!-- Dynamic Action Buttons -->
@@ -1399,6 +1870,84 @@
           </div>
         </div>
 
+
+                <button type="button" class="btn btn-sm btn-primary" onclick="loadConsumptionVarianceReport()" style="height:30px; padding:0 0.75rem; font-size:0.78rem;">
+                  <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+              </div>
+
+              <!-- Action buttons -->
+              <div style="display:flex; gap:0.35rem; align-items:center;">
+                <span class="pill pill-safe" id="report-var-count-badge" style="font-size:0.74rem;">Loading...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary KPI Cards -->
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.6rem; margin-bottom:0.75rem;">
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--primary);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Std Required Cost (BOM)</div>
+              <div id="report-var-kpi-std-cost" style="font-size:1.15rem; font-weight:800; color:var(--primary); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Calculated from actual produced FG</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--cyan);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Actual Issued Cost</div>
+              <div id="report-var-kpi-act-cost" style="font-size:1.15rem; font-weight:800; color:var(--cyan); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Store issue / outward consumption value</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--success);" id="report-var-kpi-variance-card">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Net Cost Variance</div>
+              <div id="report-var-kpi-variance-cost" style="font-size:1.15rem; font-weight:800; color:var(--success); margin-top:2px;">BDT 0</div>
+              <small id="report-var-kpi-variance-sub" style="color:var(--text-dim); font-size:0.7rem;">Net Savings / Under-consumption</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--danger);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Variance Breakdown</div>
+              <div id="report-var-kpi-breakdown" style="font-size:1.05rem; font-weight:800; margin-top:2px; display:flex; gap:0.5rem; align-items:center;">
+                <span style="color:var(--danger);" id="report-var-kpi-excess">0 Excess</span> • 
+                <span style="color:var(--success);" id="report-var-kpi-favorable">0 Favorable</span>
+              </div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Comparison of individual materials</small>
+            </div>
+          </div>
+
+          <!-- Consumption Variance Table -->
+          <div class="card">
+            <div class="card-header" style="padding:0.5rem 1rem;">
+              <div class="card-title" style="font-size:0.92rem;">
+                <i class="fas fa-layer-group" style="color:var(--primary);"></i>
+                <span id="report-consumption-var-title">Standard vs Actual RM & PM Consumption Variance Report</span>
+              </div>
+              <div class="pill pill-safe" id="report-var-status-badge" style="font-size:0.75rem;">
+                Based on Live Actual FG Output & BOM Rates
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Unit</th>
+                    <th style="text-align:right;">Std Required Qty (BOM)</th>
+                    <th style="text-align:right;">Requisitioned Qty</th>
+                    <th style="text-align:right;">Actual Issued Qty</th>
+                    <th style="text-align:right;">Variance Qty</th>
+                    <th style="text-align:center;">Variance %</th>
+                    <th style="text-align:right;">Unit Price (BDT)</th>
+                    <th style="text-align:right;">Cost Impact (BDT)</th>
+                    <th style="text-align:center;">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="report-consumption-variance-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- ================= SUB-TAB 2: RM & PM STOCK SUMMARY & FSN ANALYSIS ================= -->
         <div id="report-subtab-stock-fsn" style="display:none;">
           <!-- Compact Stock Summary Bar -->
@@ -1457,6 +2006,126 @@
                   </tr>
                 </thead>
                 <tbody id="report-stock-summary-tbody">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ================= SUB-TAB 3: RM & PM CONSUMPTION VARIANCE REPORT (STANDARD VS ACTUAL) ================= -->
+        <div id="report-subtab-consumption-variance" style="display:none;">
+          <!-- Filter Toolbar -->
+          <div class="card" style="margin-bottom:0.75rem; padding:0.5rem 0.85rem; background:var(--bg-secondary); border:1px solid var(--border-color);">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+              <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
+                <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">
+                  <i class="fas fa-filter" style="color:var(--primary);"></i> Filter:
+                </span>
+                
+                <!-- Category/Unit Selector -->
+                <select class="form-control form-control-sm" id="report-var-cat-select" style="min-width:140px; height:30px; font-size:0.78rem;" onchange="loadConsumptionVarianceReport()">
+                  <option value="ALL">All Units</option>
+                  <option value="05" selected>Unit 05 - Dry Foods</option>
+                  <option value="02">Unit 02 - Frozen Foods</option>
+                  <option value="01">Unit 01 - Broiler Chicken</option>
+                </select>
+
+                <!-- Month Selector -->
+                <select class="form-control form-control-sm" id="report-var-month-select" style="min-width:130px; height:30px; font-size:0.78rem;" onchange="loadConsumptionVarianceReport()">
+                  <option value="2026-11" selected>📅 2026-11 (Nov)</option>
+                  <option value="2026-10">📅 2026-10 (Oct)</option>
+                  <option value="2026-09">📅 2026-09 (Sep)</option>
+                  <option value="2026-08">📅 2026-08 (Aug)</option>
+                  <option value="2026-07">📅 2026-07 (Jul)</option>
+                  <option value="2026-12">📅 2026-12 (Dec)</option>
+                </select>
+
+                <!-- Material Type Filter (All, RM, PM) -->
+                <select class="form-control form-control-sm" id="report-var-type-select" style="min-width:110px; height:30px; font-size:0.78rem;" onchange="loadConsumptionVarianceReport()">
+                  <option value="ALL" selected>All Types</option>
+                  <option value="RM">Raw Materials (RM)</option>
+                  <option value="PM">Packaging (PM)</option>
+                </select>
+
+                <!-- Search Input -->
+                <div style="position:relative;">
+                  <input type="text" class="form-control form-control-sm" id="report-var-search" placeholder="Search RM / PM..." style="height:30px; font-size:0.78rem; padding-left:1.6rem; min-width:160px;" oninput="filterConsumptionVarianceTable()">
+                  <i class="fas fa-search" style="position:absolute; left:7px; top:8px; font-size:0.72rem; color:var(--text-muted);"></i>
+                </div>
+
+
+
+                <button type="button" class="btn btn-sm btn-primary" onclick="loadConsumptionVarianceReport()" style="height:30px; padding:0 0.75rem; font-size:0.78rem;">
+                  <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+              </div>
+
+              <!-- Action buttons -->
+              <div style="display:flex; gap:0.35rem; align-items:center;">
+                <span class="pill pill-safe" id="report-var-count-badge" style="font-size:0.74rem;">Loading...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary KPI Cards -->
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.6rem; margin-bottom:0.75rem;">
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--primary);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Std Required Cost (BOM)</div>
+              <div id="report-var-kpi-std-cost" style="font-size:1.15rem; font-weight:800; color:var(--primary); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Calculated from actual produced FG</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--cyan);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Actual Issued Cost</div>
+              <div id="report-var-kpi-act-cost" style="font-size:1.15rem; font-weight:800; color:var(--cyan); margin-top:2px;">BDT 0</div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Store issue / outward consumption value</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--success);" id="report-var-kpi-variance-card">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Net Cost Variance</div>
+              <div id="report-var-kpi-variance-cost" style="font-size:1.15rem; font-weight:800; color:var(--success); margin-top:2px;">BDT 0</div>
+              <small id="report-var-kpi-variance-sub" style="color:var(--text-dim); font-size:0.7rem;">Net Savings / Under-consumption</small>
+            </div>
+            <div class="card" style="padding:0.75rem 1rem; border-left:4px solid var(--danger);">
+              <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Variance Breakdown</div>
+              <div id="report-var-kpi-breakdown" style="font-size:1.05rem; font-weight:800; margin-top:2px; display:flex; gap:0.5rem; align-items:center;">
+                <span style="color:var(--danger);" id="report-var-kpi-excess">0 Excess</span> • 
+                <span style="color:var(--success);" id="report-var-kpi-favorable">0 Favorable</span>
+              </div>
+              <small style="color:var(--text-dim); font-size:0.7rem;">Comparison of individual materials</small>
+            </div>
+          </div>
+
+          <!-- Consumption Variance Table -->
+          <div class="card">
+            <div class="card-header" style="padding:0.5rem 1rem;">
+              <div class="card-title" style="font-size:0.92rem;">
+                <i class="fas fa-layer-group" style="color:var(--primary);"></i>
+                <span id="report-consumption-var-title">Standard vs Actual RM & PM Consumption Variance Report</span>
+              </div>
+              <div class="pill pill-safe" id="report-var-status-badge" style="font-size:0.75rem;">
+                Based on Live Actual FG Output & BOM Rates
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Item Code</th>
+                    <th>Material Name</th>
+                    <th>Type</th>
+                    <th>Unit</th>
+                    <th style="text-align:right;">Std Required Qty (BOM)</th>
+                    <th style="text-align:right;">Requisitioned Qty</th>
+                    <th style="text-align:right;">Actual Issued Qty</th>
+                    <th style="text-align:right;">Variance Qty</th>
+                    <th style="text-align:center;">Variance %</th>
+                    <th style="text-align:right;">Unit Price (BDT)</th>
+                    <th style="text-align:right;">Cost Impact (BDT)</th>
+                    <th style="text-align:center;">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="report-consumption-variance-tbody">
                   <!-- Injected via JavaScript -->
                 </tbody>
               </table>
